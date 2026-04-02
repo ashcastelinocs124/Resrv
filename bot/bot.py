@@ -31,6 +31,7 @@ class ReservBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.guilds = True
+        intents.message_content = True  # needed to read DM content
 
         super().__init__(
             command_prefix="!",  # prefix commands unused but required
@@ -62,6 +63,7 @@ class ReservBot(commands.Bot):
         # 2. Cogs
         await self.load_extension("bot.cogs.queue")
         await self.load_extension("bot.cogs.admin")
+        await self.load_extension("bot.cogs.dm")
         log.info("Cogs loaded")
 
         # 3. Persistent views (one per machine)

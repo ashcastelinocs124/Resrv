@@ -18,6 +18,20 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+async def _machine_slug_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Autocomplete for machine_slug parameters."""
+    machines = await models.get_machines()
+    choices = [
+        app_commands.Choice(name=f"{m['name']} ({m['slug']})", value=m["slug"])
+        for m in machines
+        if current.lower() in m["slug"].lower()
+        or current.lower() in m["name"].lower()
+    ]
+    return choices[:25]
+
+
 def _admin_channel_only() -> app_commands.check:
     """Decorator: restrict a slash command to the configured admin channel."""
 
@@ -49,6 +63,7 @@ class AdminCog(commands.Cog):
     @app_commands.describe(
         user="The user to bump", machine_slug="Machine slug (e.g. laser-cutter)"
     )
+    @app_commands.autocomplete(machine_slug=_machine_slug_autocomplete)
     @_admin_channel_only()
     async def bump(
         self,
@@ -95,6 +110,7 @@ class AdminCog(commands.Cog):
     @app_commands.describe(
         user="The user to remove", machine_slug="Machine slug (e.g. laser-cutter)"
     )
+    @app_commands.autocomplete(machine_slug=_machine_slug_autocomplete)
     @_admin_channel_only()
     async def remove(
         self,
@@ -141,6 +157,7 @@ class AdminCog(commands.Cog):
     @app_commands.describe(
         user="The user to skip", machine_slug="Machine slug (e.g. laser-cutter)"
     )
+    @app_commands.autocomplete(machine_slug=_machine_slug_autocomplete)
     @_admin_channel_only()
     async def skip(
         self,
@@ -186,6 +203,7 @@ class AdminCog(commands.Cog):
         description="Toggle a machine between active and maintenance",
     )
     @app_commands.describe(machine_slug="Machine slug (e.g. laser-cutter)")
+    @app_commands.autocomplete(machine_slug=_machine_slug_autocomplete)
     @_admin_channel_only()
     async def pause(
         self, interaction: discord.Interaction, machine_slug: str

@@ -22,10 +22,45 @@ log = logging.getLogger(__name__)
 _MACHINE_SLUGS = ["large-format-printer", "laser-cutter", "cnc-router", "water-jet"]
 
 # Valid intents the classifier can return
-_VALID_INTENTS = {"done", "more_time", "check_position", "leave", "unknown"}
+_VALID_INTENTS = {"done", "more_time", "check_position", "leave", "none"}
 
 # Cooldown between DM responses (seconds)
 _DM_COOLDOWN = 5.0
+
+# System prompt for the conversational agent
+_SYSTEM_PROMPT = """\
+You are SCD Bot, the friendly queue assistant for the SCD (Student Creative Design) \
+facility at the University of Illinois. You help students manage their machine queue \
+reservations via DM.
+
+You have a warm, casual personality. Keep responses short (1-3 sentences). Use emoji \
+sparingly. Be helpful and encouraging.
+
+Available machines: Large Format Printer, Laser Cutter, CNC Router, Water Jet.
+
+When the user's message relates to a queue action, include an "action" in your JSON \
+response. When they're just chatting, set action to "none".
+
+Actions:
+- "done" — user is finished with their machine session
+- "more_time" — user needs more time on a machine
+- "check_position" — user wants to know their queue position or status
+- "leave" — user wants to leave or cancel from a queue
+- "none" — no queue action needed (casual chat, greeting, question, etc.)
+
+Respond with ONLY valid JSON (no markdown):
+{"reply": "<your conversational response>", "action": "<action>", "machine": "<slug-or-null>"}
+
+Machine slugs: large-format-printer, laser-cutter, cnc-router, water-jet
+Set machine to null if not mentioned or not relevant.
+
+Examples:
+User: "hey whats up" -> {"reply": "Hey! Not much, just here to help with the queue. What's going on?", "action": "none", "machine": null}
+User: "I just finished on the laser" -> {"reply": "Nice, marking you as done on the Laser Cutter!", "action": "done", "machine": "laser-cutter"}
+User: "can I get a few more minutes" -> {"reply": "No worries, I'll reset your timer. Take your time!", "action": "more_time", "machine": null}
+User: "where am I in line?" -> {"reply": "Let me check that for you!", "action": "check_position", "machine": null}
+User: "thanks for the help!" -> {"reply": "Anytime! Good luck with your project 🙌", "action": "none", "machine": null}
+"""
 
 
 # --------------------------------------------------------------------------- #
@@ -123,80 +158,66 @@ class DMCog(commands.Cog):
             return
         self._cooldowns[message.author.id] = now
 
-        # Classify intent
-        intent, machine_slug = await self._classify(message.content)
+        # Show typing indicator while processing
+        async with message.channel.typing():
+            reply, action, machine_slug = await self._converse(message.content)
 
-        if intent == "unknown":
-            await message.reply(
-                "I'm not sure what you'd like to do. Pick an action below:",
-                view=FallbackActions(),
-            )
-            return
+            if action == "none":
+                # Pure chat — just send the conversational reply
+                await message.reply(reply)
+                return
 
-        await self._execute_intent(message, intent, machine_slug)
+            # Queue action detected — execute it
+            await self._execute_intent(message, action, machine_slug, reply)
 
     # ------------------------------------------------------------------ #
     # OpenAI classifier
     # ------------------------------------------------------------------ #
 
-    async def _classify(self, text: str) -> tuple[str, str | None]:
-        """Classify user message into an intent and optional machine slug.
+    async def _converse(self, text: str) -> tuple[str, str, str | None]:
+        """Send user message to OpenAI and get a conversational reply + action.
 
         Returns
         -------
-        tuple[str, str | None]
-            (intent, machine_slug) where intent is one of the valid intents
-            and machine_slug is a slug string or None.
+        tuple[str, str, str | None]
+            (reply, action, machine_slug)
         """
         if self._openai is None:
-            return ("unknown", None)
-
-        system_prompt = (
-            "You are an intent classifier for a queue management system. "
-            "Classify the user's message into exactly one of these intents:\n"
-            '- "done" -- user has finished their session on a machine\n'
-            '- "more_time" -- user needs more time on a machine\n'
-            '- "check_position" -- user wants to know their queue position\n'
-            '- "leave" -- user wants to leave / cancel from a queue\n'
-            '- "unknown" -- message does not match any of the above\n\n'
-            "Also extract the machine name if mentioned. "
-            f"Available machines (use these exact slugs): {', '.join(_MACHINE_SLUGS)}\n\n"
-            'Respond with ONLY valid JSON: {"intent": "<intent>", "machine": "<slug-or-null>"}\n'
-            "If no machine is mentioned, set machine to null."
-        )
+            return ("I'm having trouble right now. Try the buttons in the queue channel!", "none", None)
 
         try:
             response = await self._openai.chat.completions.create(
                 model="gpt-4o-mini",
-                temperature=0,
-                max_tokens=100,
+                temperature=0.7,
+                max_tokens=200,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": text},
                 ],
             )
 
             raw = response.choices[0].message.content
             if raw is None:
-                return ("unknown", None)
+                return ("Hmm, I didn't catch that. What can I help you with?", "none", None)
 
             data = json.loads(raw.strip())
-            intent = data.get("intent", "unknown")
+            reply = data.get("reply", "What can I help you with?")
+            action = data.get("action", "none")
             machine = data.get("machine")
 
-            # Validate intent
-            if intent not in _VALID_INTENTS:
-                intent = "unknown"
+            # Validate action
+            if action not in _VALID_INTENTS:
+                action = "none"
 
             # Validate machine slug
             if machine is not None and machine not in _MACHINE_SLUGS:
                 machine = None
 
-            return (intent, machine)
+            return (reply, action, machine)
 
         except Exception:
-            log.exception("OpenAI classification failed")
-            return ("unknown", None)
+            log.exception("OpenAI conversation failed")
+            return ("I'm having a little trouble right now. Try the buttons in the queue channel!", "none", None)
 
     # ------------------------------------------------------------------ #
     # Intent execution
@@ -205,20 +226,25 @@ class DMCog(commands.Cog):
     async def _execute_intent(
         self,
         message: discord.Message,
-        intent: str,
+        action: str,
         machine_slug: str | None,
+        ai_reply: str,
     ) -> None:
-        """Resolve the user's active entries and execute the intent."""
+        """Resolve the user's active entries and execute the action."""
         # Look up user
         user = await models.get_user_by_discord_id(str(message.author.id))
         if user is None:
-            await message.reply("You're not in any queue right now.")
+            await message.reply(
+                "You're not in any queue right now. Head to the queue channel to join!"
+            )
             return
 
         # Get all active entries
         entries = await models.get_user_active_entries(user["id"])
         if not entries:
-            await message.reply("You're not in any queue right now.")
+            await message.reply(
+                "You're not in any queue right now. Head to the queue channel to join!"
+            )
             return
 
         # Filter by machine if specified
@@ -233,15 +259,16 @@ class DMCog(commands.Cog):
         # Multiple entries -- ask user to pick
         if len(entries) > 1:
             await message.reply(
-                "You're in multiple queues. Which machine?",
-                view=MachinePicker(intent, entries),
+                "You're in multiple queues — which machine?",
+                view=MachinePicker(action, entries),
             )
             return
 
-        # Single entry -- execute
+        # Single entry -- execute and reply with the AI's conversational message
         entry = entries[0]
-        result = await self._do_action(intent, entry)
-        await message.reply(result)
+        result = await self._do_action(action, entry)
+        # Use AI reply as the primary message, append status info if different
+        await message.reply(ai_reply)
         await self.bot.update_queue_embeds(entry["machine_id"])
 
     # ------------------------------------------------------------------ #

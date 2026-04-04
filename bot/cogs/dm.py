@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -61,6 +62,18 @@ User: "can I get a few more minutes" -> {"reply": "No worries, I'll reset your t
 User: "where am I in line?" -> {"reply": "Let me check that for you!", "action": "check_position", "machine": null}
 User: "thanks for the help!" -> {"reply": "Anytime! Good luck with your project 🙌", "action": "none", "machine": null}
 """
+
+_ILLINOIS_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@illinois\.edu$", re.IGNORECASE)
+
+
+def _is_illinois_email(text: str) -> bool:
+    """Check if text is a valid @illinois.edu email."""
+    return bool(_ILLINOIS_EMAIL_RE.match(text.strip()))
+
+
+def _is_verification_code(text: str) -> bool:
+    """Check if text is a 6-digit verification code."""
+    return text.strip().isdigit() and len(text.strip()) == 6
 
 
 # --------------------------------------------------------------------------- #
@@ -160,14 +173,24 @@ class DMCog(commands.Cog):
 
         # Show typing indicator while processing
         async with message.channel.typing():
+            text = message.content.strip()
+
+            # --- Verification intercept (before OpenAI) ---
+            if _is_illinois_email(text):
+                await self._handle_email_submission(message, text.lower())
+                return
+
+            if _is_verification_code(text):
+                await self._handle_code_submission(message, text.strip())
+                return
+
+            # --- Normal conversational flow ---
             reply, action, machine_slug = await self._converse(message.content)
 
             if action == "none":
-                # Pure chat — just send the conversational reply
                 await message.reply(reply)
                 return
 
-            # Queue action detected — execute it
             await self._execute_intent(message, action, machine_slug, reply)
 
     # ------------------------------------------------------------------ #
@@ -218,6 +241,65 @@ class DMCog(commands.Cog):
         except Exception:
             log.exception("OpenAI conversation failed")
             return ("I'm having a little trouble right now. Try the buttons in the queue channel!", "none", None)
+
+    # ------------------------------------------------------------------ #
+    # Verification handlers
+    # ------------------------------------------------------------------ #
+
+    async def _handle_email_submission(
+        self, message: discord.Message, email: str
+    ) -> None:
+        """User sent an @illinois.edu email — start verification flow."""
+        from email_service import send_verification_email
+
+        discord_id = str(message.author.id)
+
+        # Check if already verified
+        user = await models.get_user_by_discord_id(discord_id)
+        if user and user["verified"]:
+            await message.reply("You're already verified! You can join any queue.")
+            return
+
+        # Create code and send email
+        code_row = await models.create_verification_code(discord_id, email)
+        sent = await send_verification_email(email, code_row["code"])
+
+        if sent:
+            await message.reply(
+                f"Sent a verification code to **{email}**! "
+                f"Check your inbox and type the 6-digit code here."
+            )
+        else:
+            await message.reply(
+                "I couldn't send the verification email right now. Please try again later."
+            )
+
+    async def _handle_code_submission(
+        self, message: discord.Message, code: str
+    ) -> None:
+        """User sent a 6-digit code — attempt verification."""
+        discord_id = str(message.author.id)
+
+        result = await models.verify_code(discord_id, code)
+        if result is None:
+            await message.reply(
+                "That code is invalid or expired. "
+                "Send your @illinois.edu email again to get a new one."
+            )
+            return
+
+        # Mark code as used and verify user
+        await models.mark_code_used(result["id"])
+
+        user = await models.get_or_create_user(
+            discord_id, message.author.display_name
+        )
+        await models.mark_user_verified(user["id"], result["email"])
+
+        await message.reply(
+            "You're verified! You can now join machine queues. "
+            "Head to the queue channel and hit **Join Queue**."
+        )
 
     # ------------------------------------------------------------------ #
     # Intent execution

@@ -8,12 +8,20 @@ from typing import TYPE_CHECKING
 import discord
 from discord.ext import commands
 
+from config import settings
 from db import models
 
 if TYPE_CHECKING:
     from bot.bot import ReservBot
 
 log = logging.getLogger(__name__)
+
+
+def _requires_verification(user: dict) -> bool:
+    """Check if the user needs to verify before joining a queue."""
+    if settings.public_mode:
+        return False
+    return not user.get("verified", False)
 
 
 class QueueCog(commands.Cog):
@@ -79,6 +87,22 @@ class QueueCog(commands.Cog):
             discord_id=str(interaction.user.id),
             discord_name=interaction.user.display_name,
         )
+
+        # Verification gate
+        if _requires_verification(user):
+            await interaction.response.send_message(
+                "You need to verify your **@illinois.edu** email before joining a queue.\n"
+                "DM me your email address to get started!",
+                ephemeral=True,
+            )
+            try:
+                await interaction.user.send(
+                    "To join a queue, I need to verify your Illinois email first.\n"
+                    "Just send me your **@illinois.edu** email address right here!"
+                )
+            except discord.Forbidden:
+                pass
+            return
 
         # Check for duplicate active entry
         existing = await models.get_user_active_entry(user["id"], machine_id)

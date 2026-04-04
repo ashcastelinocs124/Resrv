@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from config import settings
 from db import models
 from db.database import init_db, close_db
 
@@ -67,3 +68,33 @@ async def test_wrong_code_rejected(db):
     assert found is None
     updated = await models.get_user_by_discord_id("vtest3")
     assert updated["verified"] == 0
+
+
+async def test_unverified_user_blocked_when_public_mode_off(db, monkeypatch):
+    """Unverified user cannot join queue when public_mode=False."""
+    monkeypatch.setattr(settings, "public_mode", False)
+    user = await models.get_or_create_user("block1", "BlockUser")
+    assert (await models.get_user_by_discord_id("block1"))["verified"] == 0
+
+    from bot.cogs.queue import _requires_verification
+    assert _requires_verification(user) is True
+
+
+async def test_verified_user_allowed_when_public_mode_off(db, monkeypatch):
+    """Verified user can join queue when public_mode=False."""
+    monkeypatch.setattr(settings, "public_mode", False)
+    user = await models.get_or_create_user("allow1", "AllowUser")
+    await models.mark_user_verified(user["id"], "allow@illinois.edu")
+    user = await models.get_user_by_discord_id("allow1")
+
+    from bot.cogs.queue import _requires_verification
+    assert _requires_verification(user) is False
+
+
+async def test_unverified_user_allowed_when_public_mode_on(db, monkeypatch):
+    """Unverified user can join queue when public_mode=True."""
+    monkeypatch.setattr(settings, "public_mode", True)
+    user = await models.get_or_create_user("pub1", "PubUser")
+
+    from bot.cogs.queue import _requires_verification
+    assert _requires_verification(user) is False

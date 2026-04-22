@@ -57,14 +57,20 @@ async def test_get_machine_not_found(client: AsyncClient):
     assert resp.status_code == 404
 
 
-async def test_patch_machine_status(client: AsyncClient):
-    resp = await client.patch("/api/machines/1", json={"status": "maintenance"})
+async def test_patch_machine_status(client: AsyncClient, admin_headers):
+    resp = await client.patch(
+        "/api/machines/1",
+        headers=admin_headers,
+        json={"status": "maintenance"},
+    )
     assert resp.status_code == 200
     assert resp.json()["status"] == "maintenance"
 
 
-async def test_patch_machine_invalid_status(client: AsyncClient):
-    resp = await client.patch("/api/machines/1", json={"status": "broken"})
+async def test_patch_machine_invalid_status(client: AsyncClient, admin_headers):
+    resp = await client.patch(
+        "/api/machines/1", headers=admin_headers, json={"status": "broken"}
+    )
     assert resp.status_code == 422
 
 
@@ -109,8 +115,12 @@ async def test_join_queue_duplicate(client: AsyncClient):
     assert resp.status_code == 409
 
 
-async def test_join_queue_machine_paused(client: AsyncClient):
-    await client.patch("/api/machines/1", json={"status": "maintenance"})
+async def test_join_queue_machine_paused(client: AsyncClient, admin_headers):
+    await client.patch(
+        "/api/machines/1",
+        headers=admin_headers,
+        json={"status": "maintenance"},
+    )
     resp = await client.post(
         "/api/queue/1/join",
         json={"discord_id": "111", "discord_name": "Alice"},

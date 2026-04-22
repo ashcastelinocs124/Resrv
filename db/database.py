@@ -48,9 +48,6 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             archived_at      TEXT
         );
 
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_machines_slug_active
-            ON machines(slug) WHERE archived_at IS NULL;
-
         CREATE TABLE IF NOT EXISTS users (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             discord_id   TEXT    UNIQUE NOT NULL,
@@ -128,6 +125,13 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         await db.execute("ALTER TABLE machines ADD COLUMN embed_message_id TEXT")
     if "archived_at" not in columns:
         await db.execute("ALTER TABLE machines ADD COLUMN archived_at TEXT")
+
+    # Partial unique index on slug among active (non-archived) machines.
+    # Must run after archived_at exists.
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_machines_slug_active "
+        "ON machines(slug) WHERE archived_at IS NULL"
+    )
 
     # Add role to staff_users if missing
     cursor = await db.execute("PRAGMA table_info(staff_users)")

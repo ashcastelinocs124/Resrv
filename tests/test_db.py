@@ -395,3 +395,18 @@ async def test_compute_live_today_stats(db):
     assert machine_stat["completed_jobs"] >= 1
 
 
+# ── Machine archival schema ─────────────────────────────────────────────
+
+
+async def test_machines_have_archived_at_column(db):
+    cursor = await db.execute("PRAGMA table_info(machines)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    assert "archived_at" in columns
+
+
+async def test_fresh_machines_are_not_archived(db):
+    row = await (await db.execute(
+        "SELECT archived_at FROM machines LIMIT 1"
+    )).fetchone()
+    assert row["archived_at"] is None
+

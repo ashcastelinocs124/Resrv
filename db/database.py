@@ -42,7 +42,8 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             slug             TEXT    UNIQUE NOT NULL,
             status           TEXT    NOT NULL DEFAULT 'active',
             embed_message_id TEXT,
-            created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+            created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+            archived_at      TEXT
         );
 
         CREATE TABLE IF NOT EXISTS users (
@@ -106,6 +107,8 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     columns = {row[1] for row in await cursor.fetchall()}
     if "embed_message_id" not in columns:
         await db.execute("ALTER TABLE machines ADD COLUMN embed_message_id TEXT")
+    if "archived_at" not in columns:
+        await db.execute("ALTER TABLE machines ADD COLUMN archived_at TEXT")
 
     # Add signup fields to users if missing
     cursor = await db.execute("PRAGMA table_info(users)")

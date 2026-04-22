@@ -420,6 +420,22 @@ async def test_staff_users_have_role_column(db):
     assert "role" in columns
 
 
+async def test_settings_table_exists_and_seeded(db):
+    cursor = await db.execute("SELECT key, value FROM settings ORDER BY key")
+    rows = {r["key"]: r["value"] for r in await cursor.fetchall()}
+    for k in (
+        "reminder_minutes",
+        "grace_minutes",
+        "queue_reset_hour",
+        "agent_tick_seconds",
+        "public_mode",
+        "maintenance_banner",
+    ):
+        assert k in rows, f"missing setting: {k}"
+    assert rows["public_mode"] == "false"
+    assert rows["maintenance_banner"] == ""
+
+
 async def test_migration_promotes_oldest_staff_when_no_admin_exists(db):
     from api.auth import hash_password
     await db.execute("DELETE FROM staff_users")

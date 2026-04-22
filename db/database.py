@@ -16,6 +16,7 @@ async def init_db() -> aiosqlite.Connection:
     await _migrate(_db)
     await _seed_machines(_db)
     await _seed_staff(_db)
+    await _seed_settings(_db)
     await _db.commit()
     return _db
 
@@ -99,6 +100,12 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             avg_serve_mins REAL,
             peak_hour      INTEGER,
             ai_summary     TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_queue_status
@@ -203,6 +210,23 @@ async def _seed_staff(db: aiosqlite.Connection) -> None:
         "INSERT INTO staff_users (username, password_hash, role) VALUES (?, ?, ?)",
         (username, hash_password(password), "admin"),
     )
+
+
+async def _seed_settings(db: aiosqlite.Connection) -> None:
+    """Insert default runtime settings if missing."""
+    defaults = {
+        "reminder_minutes":   str(settings.reminder_minutes),
+        "grace_minutes":      str(settings.grace_minutes),
+        "queue_reset_hour":   str(settings.queue_reset_hour),
+        "agent_tick_seconds": str(settings.agent_tick_seconds),
+        "public_mode":        "false",
+        "maintenance_banner": "",
+    }
+    for key, value in defaults.items():
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
 
 
 async def _seed_machines(db: aiosqlite.Connection) -> None:

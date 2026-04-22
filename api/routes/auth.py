@@ -23,11 +23,13 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     token: str
     username: str
+    role: str
 
 
 class MeResponse(BaseModel):
     username: str
     staff_id: int
+    role: str
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -38,8 +40,9 @@ async def login(body: LoginRequest) -> LoginResponse:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
-    token = issue_token(staff["id"], staff["username"])
-    return LoginResponse(token=token, username=staff["username"])
+    role = staff.get("role") or "staff"
+    token = issue_token(staff["id"], staff["username"], role)
+    return LoginResponse(token=token, username=staff["username"], role=role)
 
 
 @router.post("/logout")
@@ -51,4 +54,8 @@ async def logout(_: dict = Depends(require_staff)) -> dict[str, str]:
 
 @router.get("/me", response_model=MeResponse)
 async def me(payload: dict = Depends(require_staff)) -> MeResponse:
-    return MeResponse(username=payload["usr"], staff_id=payload["sub"])
+    return MeResponse(
+        username=payload["usr"],
+        staff_id=payload["sub"],
+        role=payload.get("rol", "staff"),
+    )

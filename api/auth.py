@@ -64,10 +64,11 @@ def _b64url_decode(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-def issue_token(staff_id: int, username: str) -> str:
+def issue_token(staff_id: int, username: str, role: str = "staff") -> str:
     payload = {
         "sub": staff_id,
         "usr": username,
+        "rol": role,
         "exp": int(time.time()) + settings.auth_token_ttl_hours * 3600,
     }
     body = _b64url(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
@@ -112,6 +113,17 @@ async def require_staff(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
+        )
+    return payload
+
+
+async def require_admin(
+    payload: dict[str, Any] = Depends(require_staff),
+) -> dict[str, Any]:
+    if payload.get("rol") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required",
         )
     return payload
 

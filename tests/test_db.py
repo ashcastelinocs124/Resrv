@@ -410,3 +410,36 @@ async def test_fresh_machines_are_not_archived(db):
     )).fetchone()
     assert row["archived_at"] is None
 
+
+# ── Staff role schema ───────────────────────────────────────────────────
+
+
+async def test_staff_users_have_role_column(db):
+    cursor = await db.execute("PRAGMA table_info(staff_users)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    assert "role" in columns
+
+
+async def test_migration_promotes_oldest_staff_when_no_admin_exists(db):
+    from api.auth import hash_password
+    await db.execute("DELETE FROM staff_users")
+    await db.execute(
+        "INSERT INTO staff_users (username, password_hash, role) VALUES (?, ?, ?)",
+        ("first", hash_password("pw"), "staff"),
+    )
+    await db.execute(
+        "INSERT INTO staff_users (username, password_hash, role) VALUES (?, ?, ?)",
+        ("second", hash_password("pw"), "staff"),
+    )
+    await db.commit()
+    import db.database as dbm
+    await dbm._migrate(db)
+    row = await (await db.execute(
+        "SELECT role FROM staff_users WHERE username = 'first'"
+    )).fetchone()
+    assert row["role"] == "admin"
+    row = await (await db.execute(
+        "SELECT role FROM staff_users WHERE username = 'second'"
+    )).fetchone()
+    assert row["role"] == "staff"
+

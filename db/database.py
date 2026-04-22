@@ -15,6 +15,7 @@ async def init_db() -> aiosqlite.Connection:
     await _create_tables(_db)
     await _migrate(_db)
     await _seed_machines(_db)
+    await _seed_staff(_db)
     await _db.commit()
     return _db
 
@@ -80,6 +81,14 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             used       INTEGER NOT NULL DEFAULT 0
         );
 
+        CREATE TABLE IF NOT EXISTS staff_users (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            username      TEXT    UNIQUE NOT NULL,
+            password_hash TEXT    NOT NULL,
+            role          TEXT    NOT NULL DEFAULT 'staff',
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS analytics_snapshots (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             date           TEXT    NOT NULL,
@@ -110,6 +119,29 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     if "archived_at" not in columns:
         await db.execute("ALTER TABLE machines ADD COLUMN archived_at TEXT")
 
+    # Add role to staff_users if missing
+    cursor = await db.execute("PRAGMA table_info(staff_users)")
+    staff_columns = {row[1] for row in await cursor.fetchall()}
+    if "role" not in staff_columns:
+        await db.execute(
+            "ALTER TABLE staff_users ADD COLUMN role TEXT NOT NULL DEFAULT 'staff'"
+        )
+
+    # Ensure at least one admin exists when staff rows are present
+    row = await (await db.execute(
+        "SELECT COUNT(*) AS cnt FROM staff_users WHERE role = 'admin'"
+    )).fetchone()
+    admin_count = row[0]
+    row = await (await db.execute(
+        "SELECT COUNT(*) AS cnt FROM staff_users"
+    )).fetchone()
+    total_count = row[0]
+    if total_count > 0 and admin_count == 0:
+        await db.execute(
+            "UPDATE staff_users SET role = 'admin' "
+            "WHERE id = (SELECT MIN(id) FROM staff_users)"
+        )
+
     # Add signup fields to users if missing
     cursor = await db.execute("PRAGMA table_info(users)")
     user_columns = {row[1] for row in await cursor.fetchall()}
@@ -120,6 +152,18 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     if "registered" not in user_columns:
         await db.execute(
             "ALTER TABLE users ADD COLUMN registered INTEGER NOT NULL DEFAULT 0"
+        )
+
+    # Add role to staff_users if missing; backfill first (oldest) user as admin
+    cursor = await db.execute("PRAGMA table_info(staff_users)")
+    staff_columns = {row[1] for row in await cursor.fetchall()}
+    if "role" not in staff_columns:
+        await db.execute(
+            "ALTER TABLE staff_users ADD COLUMN role TEXT NOT NULL DEFAULT 'staff'"
+        )
+        await db.execute(
+            "UPDATE staff_users SET role = 'admin' "
+            "WHERE id = (SELECT MIN(id) FROM staff_users)"
         )
 
     # Add new analytics columns if missing
@@ -141,6 +185,24 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         await db.execute(
             "ALTER TABLE analytics_snapshots ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0"
         )
+
+
+async def _seed_staff(db: aiosqlite.Connection) -> None:
+    """Seed the default staff user from env if staff_users is empty."""
+    from api.auth import hash_password
+
+    cursor = await db.execute("SELECT COUNT(*) AS cnt FROM staff_users")
+    row = await cursor.fetchone()
+    if row[0] > 0:
+        return
+    username = settings.staff_username
+    password = settings.staff_password
+    if not username or not password:
+        return
+    await db.execute(
+        "INSERT INTO staff_users (username, password_hash, role) VALUES (?, ?, ?)",
+        (username, hash_password(password), "admin"),
+    )
 
 
 async def _seed_machines(db: aiosqlite.Connection) -> None:

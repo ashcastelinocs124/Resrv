@@ -191,6 +191,144 @@ async def update_machine_status(machine_id: int, status: str) -> None:
     await db.commit()
 
 
+# ── Machine Units ────────────────────────────────────────────────────────
+
+async def list_units(
+    machine_id: int, *, include_archived: bool = False
+) -> list[dict[str, Any]]:
+    db = await get_db()
+    sql = "SELECT * FROM machine_units WHERE machine_id = ?"
+    if not include_archived:
+        sql += " AND archived_at IS NULL"
+    sql += " ORDER BY id"
+    cursor = await db.execute(sql, (machine_id,))
+    return _rows_to_dicts(await cursor.fetchall())
+
+
+async def get_unit(unit_id: int) -> dict[str, Any] | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM machine_units WHERE id = ?", (unit_id,)
+    )
+    return _row_to_dict(await cursor.fetchone())
+
+
+def _validate_label(label: str) -> str:
+    stripped = (label or "").strip()
+    if not (1 <= len(stripped) <= 64):
+        raise ValueError("label must be 1–64 characters")
+    return stripped
+
+
+async def create_unit(*, machine_id: int, label: str) -> dict[str, Any]:
+    label = _validate_label(label)
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT 1 FROM machine_units "
+        "WHERE machine_id = ? AND label = ? AND archived_at IS NULL",
+        (machine_id, label),
+    )
+    if await cursor.fetchone():
+        raise ValueError(f"label already in use: {label!r}")
+    cursor = await db.execute(
+        "INSERT INTO machine_units (machine_id, label) VALUES (?, ?) RETURNING *",
+        (machine_id, label),
+    )
+    row = dict(await cursor.fetchone())
+    await db.commit()
+    return row
+
+
+async def update_unit(
+    unit_id: int,
+    *,
+    label: str | None = None,
+    status: str | None = None,
+) -> None:
+    sets: list[str] = []
+    params: list[Any] = []
+    if label is not None:
+        label = _validate_label(label)
+        db = await get_db()
+        cur = await db.execute(
+            """
+            SELECT 1 FROM machine_units
+            WHERE machine_id = (SELECT machine_id FROM machine_units WHERE id = ?)
+              AND label = ? AND archived_at IS NULL AND id != ?
+            """,
+            (unit_id, label, unit_id),
+        )
+        if await cur.fetchone():
+            raise ValueError(f"label already in use: {label!r}")
+        sets.append("label = ?")
+        params.append(label)
+    if status is not None:
+        if status not in {"active", "maintenance"}:
+            raise ValueError(f"invalid status: {status!r}")
+        sets.append("status = ?")
+        params.append(status)
+    if not sets:
+        return
+    params.append(unit_id)
+    db = await get_db()
+    await db.execute(
+        f"UPDATE machine_units SET {', '.join(sets)} WHERE id = ?", params
+    )
+    await db.commit()
+
+
+async def archive_unit(unit_id: int) -> None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT 1 FROM queue_entries WHERE unit_id = ? AND status = 'serving'",
+        (unit_id,),
+    )
+    if await cursor.fetchone():
+        raise ValueError("unit has an active serving entry")
+    await db.execute(
+        "UPDATE machine_units SET archived_at = datetime('now') WHERE id = ?",
+        (unit_id,),
+    )
+    await db.commit()
+
+
+async def restore_unit(unit_id: int) -> None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT machine_id, label FROM machine_units WHERE id = ?", (unit_id,)
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        raise ValueError("unit not found")
+    clash = await db.execute(
+        "SELECT 1 FROM machine_units "
+        "WHERE machine_id = ? AND label = ? AND archived_at IS NULL AND id != ?",
+        (row["machine_id"], row["label"], unit_id),
+    )
+    if await clash.fetchone():
+        raise ValueError(f"label already in use: {row['label']!r}")
+    await db.execute(
+        "UPDATE machine_units SET archived_at = NULL WHERE id = ?", (unit_id,)
+    )
+    await db.commit()
+
+
+async def purge_unit(unit_id: int) -> None:
+    """Hard-delete a unit. Nulls unit_id on historical queue_entries first."""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT 1 FROM queue_entries WHERE unit_id = ? AND status = 'serving'",
+        (unit_id,),
+    )
+    if await cursor.fetchone():
+        raise ValueError("unit has an active serving entry")
+    await db.execute(
+        "UPDATE queue_entries SET unit_id = NULL WHERE unit_id = ?", (unit_id,)
+    )
+    await db.execute("DELETE FROM machine_units WHERE id = ?", (unit_id,))
+    await db.commit()
+
+
 # ── Users ────────────────────────────────────────────────────────────────
 
 async def get_or_create_user(discord_id: str, discord_name: str) -> dict[str, Any]:

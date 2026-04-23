@@ -150,3 +150,66 @@ async def test_migration_adds_unit_id_to_queue_entries(db):
     cursor = await db.execute("PRAGMA table_info(queue_entries)")
     cols = {r[1] for r in await cursor.fetchall()}
     assert "unit_id" in cols
+
+
+# ── machine_unit CRUD helpers ────────────────────────────────────────────
+
+
+async def test_list_units_for_machine(db):
+    machines = await models.get_machines()
+    mid = machines[0]["id"]
+    units = await models.list_units(mid)
+    assert len(units) == 1
+    assert units[0]["label"] == "Main"
+    assert units[0]["status"] == "active"
+    assert units[0]["archived_at"] is None
+
+
+async def test_create_unit_success(db):
+    mid = (await models.get_machines())[0]["id"]
+    unit = await models.create_unit(machine_id=mid, label="Prusa MK4")
+    assert unit["label"] == "Prusa MK4"
+    assert unit["status"] == "active"
+
+
+async def test_create_unit_duplicate_label_raises(db):
+    mid = (await models.get_machines())[0]["id"]
+    await models.create_unit(machine_id=mid, label="Prusa")
+    with pytest.raises(ValueError, match="already in use"):
+        await models.create_unit(machine_id=mid, label="Prusa")
+
+
+async def test_create_unit_blank_label_rejected(db):
+    mid = (await models.get_machines())[0]["id"]
+    with pytest.raises(ValueError):
+        await models.create_unit(machine_id=mid, label="   ")
+
+
+async def test_update_unit_label_and_status(db):
+    mid = (await models.get_machines())[0]["id"]
+    unit = await models.create_unit(machine_id=mid, label="X1")
+    await models.update_unit(unit["id"], label="Bambu X1", status="maintenance")
+    after = await models.get_unit(unit["id"])
+    assert after["label"] == "Bambu X1"
+    assert after["status"] == "maintenance"
+
+
+async def test_archive_and_restore_unit(db):
+    mid = (await models.get_machines())[0]["id"]
+    unit = await models.create_unit(machine_id=mid, label="Ender")
+    await models.archive_unit(unit["id"])
+    active = await models.list_units(mid)
+    assert all(u["label"] != "Ender" for u in active)
+    await models.restore_unit(unit["id"])
+    active = await models.list_units(mid)
+    assert any(u["label"] == "Ender" for u in active)
+
+
+async def test_archive_unit_with_serving_entry_raises(db):
+    mid = (await models.get_machines())[0]["id"]
+    unit = await models.create_unit(machine_id=mid, label="Z")
+    user = await models.get_or_create_user("42", "tester")
+    entry = await models.join_queue(user["id"], mid)
+    await models.update_entry_status(entry["id"], "serving", unit_id=unit["id"])
+    with pytest.raises(ValueError, match="active serving entry"):
+        await models.archive_unit(unit["id"])

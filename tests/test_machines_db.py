@@ -72,3 +72,81 @@ async def test_count_active_queue_entries(db):
     user = await models.get_or_create_user("u1", "U1")
     await models.join_queue(user["id"], m["id"])
     assert await models.count_active_queue_entries(m["id"]) == 1
+
+
+async def test_migration_creates_machine_units_table(db):
+    cursor = await db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='machine_units'"
+    )
+    row = await cursor.fetchone()
+    assert row is not None
+
+
+async def test_migration_backfills_main_unit_for_existing_machines(db):
+    # Every non-archived machine should have exactly one unit labeled "Main"
+    cursor = await db.execute(
+        """
+        SELECT m.id, m.name,
+               (SELECT COUNT(*) FROM machine_units u
+                WHERE u.machine_id = m.id AND u.archived_at IS NULL) AS unit_count,
+               (SELECT u.label FROM machine_units u
+                WHERE u.machine_id = m.id AND u.archived_at IS NULL LIMIT 1) AS label
+        FROM machines m
+        WHERE m.archived_at IS NULL
+        """
+    )
+    rows = await cursor.fetchall()
+    assert len(rows) > 0
+    for r in rows:
+        assert r["unit_count"] == 1, f"machine {r['name']} has {r['unit_count']} units"
+        assert r["label"] == "Main"
+
+
+async def test_migration_partial_unique_index_allows_label_reuse_after_archive(db):
+    cursor = await db.execute(
+        "SELECT id FROM machines WHERE archived_at IS NULL LIMIT 1"
+    )
+    machine_id = (await cursor.fetchone())["id"]
+
+    await db.execute(
+        "INSERT INTO machine_units (machine_id, label) VALUES (?, ?)",
+        (machine_id, "Prusa MK4"),
+    )
+    await db.execute(
+        """
+        UPDATE machine_units
+        SET archived_at = datetime('now')
+        WHERE machine_id = ? AND label = 'Prusa MK4'
+        """,
+        (machine_id,),
+    )
+    # Re-insert same label — must succeed because first row is archived
+    await db.execute(
+        "INSERT INTO machine_units (machine_id, label) VALUES (?, ?)",
+        (machine_id, "Prusa MK4"),
+    )
+    await db.commit()
+
+
+async def test_migration_partial_unique_index_rejects_duplicate_active_label(db):
+    import aiosqlite
+    cursor = await db.execute(
+        "SELECT id FROM machines WHERE archived_at IS NULL LIMIT 1"
+    )
+    machine_id = (await cursor.fetchone())["id"]
+
+    await db.execute(
+        "INSERT INTO machine_units (machine_id, label) VALUES (?, ?)",
+        (machine_id, "Bambu"),
+    )
+    with pytest.raises(aiosqlite.IntegrityError):
+        await db.execute(
+            "INSERT INTO machine_units (machine_id, label) VALUES (?, ?)",
+            (machine_id, "Bambu"),
+        )
+
+
+async def test_migration_adds_unit_id_to_queue_entries(db):
+    cursor = await db.execute("PRAGMA table_info(queue_entries)")
+    cols = {r[1] for r in await cursor.fetchall()}
+    assert "unit_id" in cols

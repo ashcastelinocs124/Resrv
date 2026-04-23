@@ -17,6 +17,7 @@ async def init_db() -> aiosqlite.Connection:
     await _seed_machines(_db)
     await _seed_staff(_db)
     await _seed_settings(_db)
+    await _backfill_main_units(_db)
     await _db.commit()
     return _db
 
@@ -46,6 +47,15 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             embed_message_id TEXT,
             created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
             archived_at      TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS machine_units (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            machine_id   INTEGER NOT NULL REFERENCES machines(id),
+            label        TEXT    NOT NULL,
+            status       TEXT    NOT NULL DEFAULT 'active',
+            created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+            archived_at  TEXT
         );
 
         CREATE TABLE IF NOT EXISTS users (
@@ -133,6 +143,38 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         "ON machines(slug) WHERE archived_at IS NULL"
     )
 
+    # machine_units may be missing on upgrades from pre-multi-unit DBs.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS machine_units (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            machine_id   INTEGER NOT NULL REFERENCES machines(id),
+            label        TEXT    NOT NULL,
+            status       TEXT    NOT NULL DEFAULT 'active',
+            created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+            archived_at  TEXT
+        )
+        """
+    )
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_machine_units_label_active "
+        "ON machine_units(machine_id, label) WHERE archived_at IS NULL"
+    )
+
+    # Add queue_entries.unit_id if missing
+    cursor = await db.execute("PRAGMA table_info(queue_entries)")
+    qe_cols = {row[1] for row in await cursor.fetchall()}
+    if "unit_id" not in qe_cols:
+        await db.execute(
+            "ALTER TABLE queue_entries "
+            "ADD COLUMN unit_id INTEGER REFERENCES machine_units(id)"
+        )
+
+    # Backfill: every non-archived machine with zero units gets a "Main" unit.
+    # Runs here for upgrade paths (where existing machines predate units).
+    # Also re-invoked after _seed_machines in init_db so seeded machines are covered.
+    await _backfill_main_units(db)
+
     # Add role to staff_users if missing
     cursor = await db.execute("PRAGMA table_info(staff_users)")
     staff_columns = {row[1] for row in await cursor.fetchall()}
@@ -199,6 +241,27 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         await db.execute(
             "ALTER TABLE analytics_snapshots ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0"
         )
+
+
+async def _backfill_main_units(db: aiosqlite.Connection) -> None:
+    """Ensure every non-archived machine has at least one active unit.
+
+    Idempotent: only inserts a 'Main' unit for machines that currently have
+    zero non-archived units. Called from _migrate (for upgrade paths) and
+    again from init_db after _seed_machines (so seeded machines are covered).
+    """
+    await db.execute(
+        """
+        INSERT INTO machine_units (machine_id, label)
+        SELECT m.id, 'Main'
+        FROM machines m
+        WHERE m.archived_at IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM machine_units u
+              WHERE u.machine_id = m.id AND u.archived_at IS NULL
+          )
+        """
+    )
 
 
 async def _seed_staff(db: aiosqlite.Connection) -> None:

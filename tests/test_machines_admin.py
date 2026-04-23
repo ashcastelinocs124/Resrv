@@ -124,3 +124,20 @@ async def test_public_can_read_machines(client, db):
     r = await client.get("/api/machines/")
     assert r.status_code == 200
     assert len(r.json()) > 0
+
+
+async def test_machine_get_includes_units(client, db):
+    machines = (await client.get("/api/machines/")).json()
+    mid = machines[0]["id"]
+    r = await client.get(f"/api/machines/{mid}")
+    assert r.status_code == 200
+    data = r.json()
+    assert "units" in data
+    assert len(data["units"]) >= 1
+    assert data["units"][0]["label"] == "Main"
+
+
+async def test_machines_list_includes_units(client, db):
+    r = await client.get("/api/machines/")
+    for m in r.json():
+        assert "units" in m

@@ -22,6 +22,12 @@ router = APIRouter(
 
 # ── Schemas ──────────────────────────────────────────────────────────────
 
+class UnitSummary(BaseModel):
+    id: int
+    label: str
+    status: str
+
+
 class MachineOut(BaseModel):
     id: int
     name: str
@@ -29,6 +35,16 @@ class MachineOut(BaseModel):
     status: str
     archived_at: str | None = None
     created_at: str
+    units: list[UnitSummary] = []
+
+
+async def _attach_units(machine: dict) -> dict:
+    units = await models.list_units(machine["id"])
+    machine["units"] = [
+        {"id": u["id"], "label": u["label"], "status": u["status"]}
+        for u in units
+    ]
+    return machine
 
 
 class MachineCreate(BaseModel):
@@ -55,7 +71,10 @@ class PurgeConfirm(BaseModel):
 @router.get("/", response_model=list[MachineOut])
 async def list_all(include_archived: bool = Query(False)) -> list[dict]:
     """List machines. Public; admin UI may request archived too."""
-    return await models.list_machines(include_archived=include_archived)
+    rows = await models.list_machines(include_archived=include_archived)
+    for m in rows:
+        await _attach_units(m)
+    return rows
 
 
 @router.get("/{machine_id}", response_model=MachineOut)
@@ -63,7 +82,7 @@ async def get_single(machine_id: int) -> dict:
     machine = await models.get_machine(machine_id)
     if machine is None:
         raise HTTPException(status_code=404, detail="Machine not found")
-    return machine
+    return await _attach_units(machine)
 
 
 # ── Staff endpoints (write) ──────────────────────────────────────────────
@@ -80,7 +99,7 @@ async def create(body: MachineCreate) -> dict:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     notify_embed_create(m["id"])
-    return m
+    return await _attach_units(m)
 
 
 @router.patch(
@@ -103,7 +122,7 @@ async def patch(machine_id: int, body: MachineUpdate) -> dict:
     notify_embed_update(machine_id)
     updated = await models.get_machine(machine_id)
     assert updated is not None
-    return updated
+    return await _attach_units(updated)
 
 
 # ── Admin-only endpoints ─────────────────────────────────────────────────
@@ -154,4 +173,4 @@ async def restore(machine_id: int) -> dict:
     notify_embed_create(machine_id)
     restored = await models.get_machine(machine_id)
     assert restored is not None
-    return restored
+    return await _attach_units(restored)

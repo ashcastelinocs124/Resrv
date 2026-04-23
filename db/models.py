@@ -61,6 +61,10 @@ async def create_machine(*, name: str, slug: str) -> dict[str, Any]:
         (name, slug),
     )
     row = dict(await cursor.fetchone())
+    await db.execute(
+        "INSERT INTO machine_units (machine_id, label) VALUES (?, 'Main')",
+        (row["id"],),
+    )
     await db.commit()
     return row
 
@@ -134,7 +138,7 @@ async def restore_machine(machine_id: int) -> None:
 
 
 async def purge_machine(machine_id: int) -> dict[str, int]:
-    """Hard-delete machine + cascade queue_entries + analytics_snapshots."""
+    """Hard-delete machine + cascade queue_entries + analytics_snapshots + units."""
     db = await get_db()
     qe = await db.execute(
         "DELETE FROM queue_entries WHERE machine_id = ?", (machine_id,)
@@ -144,9 +148,17 @@ async def purge_machine(machine_id: int) -> dict[str, int]:
         "DELETE FROM analytics_snapshots WHERE machine_id = ?", (machine_id,)
     )
     snap_count = snap.rowcount
+    u = await db.execute(
+        "DELETE FROM machine_units WHERE machine_id = ?", (machine_id,)
+    )
+    unit_count = u.rowcount
     await db.execute("DELETE FROM machines WHERE id = ?", (machine_id,))
     await db.commit()
-    return {"queue_entries": qe_count, "analytics_snapshots": snap_count}
+    return {
+        "queue_entries": qe_count,
+        "analytics_snapshots": snap_count,
+        "machine_units": unit_count,
+    }
 
 
 async def count_active_queue_entries(machine_id: int) -> int:

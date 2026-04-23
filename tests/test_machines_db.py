@@ -205,6 +205,14 @@ async def test_archive_and_restore_unit(db):
     assert any(u["label"] == "Ender" for u in active)
 
 
+async def test_create_machine_seeds_main_unit(db):
+    m = await models.create_machine(name="Plotter", slug="plotter")
+    units = await models.list_units(m["id"])
+    assert len(units) == 1
+    assert units[0]["label"] == "Main"
+    assert units[0]["status"] == "active"
+
+
 async def test_archive_unit_with_serving_entry_raises(db):
     mid = (await models.get_machines())[0]["id"]
     unit = await models.create_unit(machine_id=mid, label="Z")

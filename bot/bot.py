@@ -125,6 +125,25 @@ class ReservBot(commands.Bot):
     # Embed management
     # ------------------------------------------------------------------ #
 
+    async def _build_units_view(self, machine_id: int) -> list[dict]:
+        """Fetch units + map each to its current serving user's display name."""
+        units = await models.list_units(machine_id)
+        entries = await models.get_queue_for_machine(machine_id)
+        serving_map: dict[int, str] = {}
+        for e in entries:
+            if e["status"] == "serving" and e.get("unit_id"):
+                serving_map[e["unit_id"]] = e["discord_name"]
+        return [
+            {
+                "id": u["id"],
+                "label": u["label"],
+                "status": u["status"],
+                "archived_at": u.get("archived_at"),
+                "serving_name": serving_map.get(u["id"]),
+            }
+            for u in units
+        ]
+
     async def _post_queue_embeds(self) -> None:
         """Post or reuse queue embeds for each machine in the queue channel.
 
@@ -147,7 +166,8 @@ class ReservBot(commands.Bot):
         machines = await models.get_machines()
         for machine in machines:
             queue = await models.get_queue_for_machine(machine["id"])
-            embed = build_machine_embed(machine, queue)
+            units_view = await self._build_units_view(machine["id"])
+            embed = build_machine_embed(machine, queue, units=units_view)
             view = QueueButtonView(machine["id"])
             mid = machine["id"]
 
@@ -196,7 +216,8 @@ class ReservBot(commands.Bot):
             await self.update_queue_embeds(machine_id)
             return
         queue = await models.get_queue_for_machine(machine_id)
-        embed = build_machine_embed(machine, queue)
+        units_view = await self._build_units_view(machine_id)
+        embed = build_machine_embed(machine, queue, units=units_view)
         view = QueueButtonView(machine_id)
         msg = await channel.send(embed=embed, view=view)
         self.embed_messages[machine_id] = msg.id
@@ -247,7 +268,8 @@ class ReservBot(commands.Bot):
                 continue
 
             queue = await models.get_queue_for_machine(mid)
-            embed = build_machine_embed(machine, queue)
+            units_view = await self._build_units_view(mid)
+            embed = build_machine_embed(machine, queue, units=units_view)
 
             try:
                 msg = await channel.fetch_message(msg_id)

@@ -58,6 +58,7 @@ class QueueButtonView(discord.ui.View):
 def build_machine_embed(
     machine: dict[str, Any],
     queue_entries: list[dict[str, Any]],
+    units: list[dict[str, Any]] | None = None,
 ) -> discord.Embed:
     """Build a rich embed showing machine status and its current queue.
 
@@ -94,6 +95,30 @@ def build_machine_embed(
     waiting = [e for e in queue_entries if e["status"] == "waiting"]
 
     embed.add_field(name="Waiting", value=str(len(waiting)), inline=True)
+
+    # Units block — hidden when a machine has a single "Main" unit (back-compat)
+    if units is not None and not (
+        len(units) == 1 and units[0]["label"] == "Main"
+    ):
+        active_units = [u for u in units if u.get("archived_at") is None]
+        if not active_units or all(
+            u["status"] == "maintenance" for u in active_units
+        ):
+            embed.add_field(
+                name="Units", value="_All units unavailable_", inline=False
+            )
+        else:
+            lines = []
+            for u in active_units:
+                if u["status"] == "maintenance":
+                    lines.append(f"\u2022 {u['label']} — \U0001F527 maintenance")
+                elif u.get("serving_name"):
+                    lines.append(
+                        f"\u2022 {u['label']} — \U0001F535 {u['serving_name']}"
+                    )
+                else:
+                    lines.append(f"\u2022 {u['label']} — \U0001F7E2 available")
+            embed.add_field(name="Units", value="\n".join(lines), inline=False)
 
     # Currently serving
     if serving:

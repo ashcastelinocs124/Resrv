@@ -7,6 +7,7 @@ import { AttendanceChart } from "../components/analytics/AttendanceChart";
 import { MachineUtilization } from "../components/analytics/MachineUtilization";
 import { PeakHours } from "../components/analytics/PeakHours";
 import { MachineTable } from "../components/analytics/MachineTable";
+import { AnalyticsChat } from "../components/analytics/AnalyticsChat";
 
 const periods: { label: string; value: AnalyticsPeriod }[] = [
   { label: "Day", value: "day" },
@@ -72,6 +73,8 @@ export function Analytics() {
           <MachineTable machines={data.machines} />
         </>
       )}
+
+      <AnalyticsChat period={period} />
     </div>
   );
 }

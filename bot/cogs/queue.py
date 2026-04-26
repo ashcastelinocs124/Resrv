@@ -19,8 +19,89 @@ log = logging.getLogger(__name__)
 _ILLINOIS_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@illinois\.edu$", re.IGNORECASE)
 
 
+class _CollegeSelect(discord.ui.Select):
+    """Select subclass exposing a writable ``values`` attribute for tests."""
+
+    def __init__(self, *, view_ref: "CollegeSelectView", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._view_ref = view_ref
+        self._test_values: list[str] | None = None
+
+    @property
+    def values(self) -> list[str]:  # type: ignore[override]
+        if self._test_values is not None:
+            return self._test_values
+        return super().values
+
+    @values.setter
+    def values(self, val: list[str]) -> None:
+        self._test_values = list(val)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self._view_ref.on_select(interaction, self)
+
+
+class CollegeSelectView(discord.ui.View):
+    """Ephemeral view shown before the signup modal — picks a UIUC college."""
+
+    def __init__(
+        self,
+        *,
+        bot: ReservBot,
+        user_id: int,
+        machine_id: int,
+        prefill: dict | None,
+    ) -> None:
+        super().__init__(timeout=120)
+        self._bot = bot
+        self._user_id = user_id
+        self._machine_id = machine_id
+        self._prefill = prefill
+
+    @classmethod
+    async def build(
+        cls,
+        *,
+        bot: ReservBot,
+        user_id: int,
+        machine_id: int,
+        prefill: dict | None,
+    ) -> "CollegeSelectView":
+        colleges = await models.list_active_colleges()
+        view = cls(
+            bot=bot, user_id=user_id, machine_id=machine_id, prefill=prefill
+        )
+        options = [
+            discord.SelectOption(label=c["name"][:100], value=str(c["id"]))
+            for c in colleges[:25]
+        ]
+        select = _CollegeSelect(
+            view_ref=view,
+            custom_id=f"signup_college:{user_id}:{machine_id}",
+            placeholder="Select your college",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+        view.add_item(select)
+        return view
+
+    async def on_select(
+        self, interaction: discord.Interaction, select: discord.ui.Select
+    ) -> None:
+        college_id = int(select.values[0])
+        modal = SignupModal(
+            bot=self._bot,
+            user_id=self._user_id,
+            machine_id=self._machine_id,
+            college_id=college_id,
+            prefill=self._prefill,
+        )
+        await interaction.response.send_modal(modal)
+
+
 class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
-    """Collects user profile info before first queue join."""
+    """Collects user profile info before first queue join (college picked separately)."""
 
     full_name = discord.ui.TextInput(
         label="Full Name",
@@ -40,12 +121,6 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
         min_length=2,
         max_length=100,
     )
-    college = discord.ui.TextInput(
-        label="College",
-        placeholder="e.g. Grainger Engineering",
-        min_length=2,
-        max_length=100,
-    )
     graduation_year = discord.ui.TextInput(
         label="Expected Graduation Year",
         placeholder="e.g. 2027",
@@ -53,11 +128,25 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
         max_length=4,
     )
 
-    def __init__(self, bot: ReservBot, user_id: int, machine_id: int) -> None:
+    def __init__(
+        self,
+        *,
+        bot: ReservBot,
+        user_id: int,
+        machine_id: int,
+        college_id: int,
+        prefill: dict | None,
+    ) -> None:
         super().__init__()
         self._bot = bot
         self._user_id = user_id
         self._machine_id = machine_id
+        self._college_id = college_id
+        if prefill:
+            self.full_name.default = prefill.get("full_name") or ""
+            self.email.default = prefill.get("email") or ""
+            self.major.default = prefill.get("major") or ""
+            self.graduation_year.default = prefill.get("graduation_year") or ""
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         email_val = self.email.value.strip()
@@ -79,7 +168,7 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
             full_name=self.full_name.value.strip(),
             email=email_val,
             major=self.major.value.strip(),
-            college=self.college.value.strip(),
+            college_id=self._college_id,
             graduation_year=year_val,
         )
 
@@ -182,10 +271,34 @@ class QueueCog(commands.Cog):
             discord_name=interaction.user.display_name,
         )
 
-        # Registration gate — show signup modal if not registered
+        # Registration gate — show college select view (then modal) if not registered
         if not user.get("registered"):
-            await interaction.response.send_modal(
-                SignupModal(self.bot, user["id"], machine_id)
+            prefill_dict = None
+            has_any = any([
+                user.get("full_name"), user.get("email"),
+                user.get("major"), user.get("graduation_year"),
+            ])
+            if has_any:
+                prefill_dict = {
+                    "full_name": user.get("full_name"),
+                    "email": user.get("email"),
+                    "major": user.get("major"),
+                    "graduation_year": user.get("graduation_year"),
+                }
+            view = await CollegeSelectView.build(
+                bot=self.bot,
+                user_id=user["id"],
+                machine_id=machine_id,
+                prefill=prefill_dict,
+            )
+            if not view.children or not view.children[0].options:
+                await interaction.response.send_message(
+                    "Sign-ups are temporarily unavailable — please contact staff.",
+                    ephemeral=True,
+                )
+                return
+            await interaction.response.send_message(
+                "Pick your UIUC college:", view=view, ephemeral=True,
             )
             return
 

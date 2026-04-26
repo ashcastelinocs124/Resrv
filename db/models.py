@@ -1029,3 +1029,115 @@ async def compute_live_today_stats() -> list[dict[str, Any]]:
     return rows
 
 
+# ── Colleges ─────────────────────────────────────────────────────────────
+
+
+class DuplicateCollegeError(Exception):
+    """Raised when creating/restoring a college that conflicts with an active row."""
+
+
+class CollegeInUseError(Exception):
+    """Raised when purging a college that still has users referencing it."""
+
+
+async def create_college(name: str) -> dict:
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "INSERT INTO colleges (name) VALUES (?) RETURNING *", (name,)
+        )
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            raise DuplicateCollegeError(name) from e
+        raise
+    row = await cursor.fetchone()
+    await db.commit()
+    return dict(row)
+
+
+async def list_active_colleges() -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM colleges WHERE archived_at IS NULL ORDER BY name"
+    )
+    return [dict(r) for r in await cursor.fetchall()]
+
+
+async def list_all_colleges() -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM colleges ORDER BY archived_at IS NULL DESC, name"
+    )
+    return [dict(r) for r in await cursor.fetchall()]
+
+
+async def get_college(college_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute("SELECT * FROM colleges WHERE id = ?", (college_id,))
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def update_college(college_id: int, *, name: str) -> dict | None:
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE colleges SET name = ? WHERE id = ?", (name, college_id)
+        )
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            raise DuplicateCollegeError(name) from e
+        raise
+    await db.commit()
+    return await get_college(college_id)
+
+
+async def archive_college(college_id: int) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "UPDATE colleges SET archived_at = datetime('now') "
+        "WHERE id = ? AND archived_at IS NULL",
+        (college_id,),
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def restore_college(college_id: int) -> bool:
+    db = await get_db()
+    target = await get_college(college_id)
+    if target is None:
+        return False
+    # 409-equivalent: refuse if an active twin exists with the same name
+    cursor = await db.execute(
+        "SELECT 1 FROM colleges WHERE name = ? AND archived_at IS NULL AND id != ?",
+        (target["name"], college_id),
+    )
+    if await cursor.fetchone():
+        raise DuplicateCollegeError(target["name"])
+    cursor = await db.execute(
+        "UPDATE colleges SET archived_at = NULL "
+        "WHERE id = ? AND archived_at IS NOT NULL",
+        (college_id,),
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def count_users_in_college(college_id: int) -> int:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM users WHERE college_id = ?", (college_id,)
+    )
+    row = await cursor.fetchone()
+    return row["cnt"]
+
+
+async def purge_college(college_id: int) -> bool:
+    if await count_users_in_college(college_id) > 0:
+        raise CollegeInUseError(college_id)
+    db = await get_db()
+    cursor = await db.execute("DELETE FROM colleges WHERE id = ?", (college_id,))
+    await db.commit()
+    return cursor.rowcount > 0
+

@@ -6,9 +6,11 @@ Custom queue management system for the SCD facility at the University of Illinoi
 
 - **Monolith:** Single Python process (discord.py + FastAPI + background agent)
 - **Database:** SQLite (WAL mode)
-- **Frontend:** React + Vite + Tailwind CSS
+- **Frontend:** React + Vite + Tailwind CSS; `react-markdown` for assistant chat replies
 - **Hosting:** Small VPS (DigitalOcean/Hetzner)
-- **AI:** OpenAI API for analytics summaries
+- **AI:** OpenAI API — daily analytics summaries, DM intent classification, and the multi-turn analytics chatbot (SSE-streamed). Lazy-instantiated `AsyncOpenAI` everywhere so a missing key degrades to 503 instead of crashing.
+- **Auth:** Stdlib-only staff auth (PBKDF2 password hashing + HMAC-signed Bearer tokens, no JWT/bcrypt deps). `require_staff` / `require_admin` FastAPI dependencies; tokens stored client-side in `localStorage` under `reserv.auth.token`.
+- **Current scale (2026-04-26):** 6 seeded machines, 172 tests, ~25 API routes across queue / machines / units / staff / settings / analytics / chat.
 
 ## Key Conventions
 
@@ -17,6 +19,10 @@ Custom queue management system for the SCD facility at the University of Illinoi
 - No time-based reservations — pure queue
 - Illinois email verification required (toggleable for public events)
 - Non-sensitive data only (no UIN)
+- **Soft-delete pattern:** any table that can be archived uses `archived_at TEXT` + a partial unique index `WHERE archived_at IS NULL`. Column-level UNIQUE blocks slug/label reuse after archive — always reach for the partial index instead.
+- **Cross-user access returns 404, not 403** — avoids leaking the existence of resources owned by other staff users (chat conversations follow this rule).
+- **AI model selection always goes through a server-side allowlist** (e.g. `ALLOWED_MODELS` in `api/routes/chat.py`). Frontend dropdowns are driven by a `GET …/models` route so the UI can't drift from what the server permits.
+- **Display rank ≠ persisted position.** `queue_entries.position` is a join-time stamp; UI components rank waiting entries from the filtered list at render time, never from the raw column.
 
 ## Learnings
 

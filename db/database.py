@@ -118,6 +118,24 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS chat_conversations (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_user_id INTEGER NOT NULL REFERENCES staff_users(id),
+            title         TEXT    NOT NULL DEFAULT 'New chat',
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+            role            TEXT    NOT NULL CHECK (role IN ('user','assistant','system','tool')),
+            content         TEXT    NOT NULL,
+            tool_call_id    TEXT,
+            tool_calls_json TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE INDEX IF NOT EXISTS idx_queue_status
             ON queue_entries(status);
         CREATE INDEX IF NOT EXISTS idx_queue_machine_date
@@ -241,6 +259,36 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         await db.execute(
             "ALTER TABLE analytics_snapshots ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0"
         )
+
+    # Chat tables (analytics chatbot) — additive on upgrade.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_conversations (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_user_id INTEGER NOT NULL REFERENCES staff_users(id),
+            title         TEXT    NOT NULL DEFAULT 'New chat',
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+            role            TEXT    NOT NULL CHECK (role IN ('user','assistant','system','tool')),
+            content         TEXT    NOT NULL,
+            tool_call_id    TEXT,
+            tool_calls_json TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_msgs_conv "
+        "ON chat_messages(conversation_id, id)"
+    )
 
 
 async def _backfill_main_units(db: aiosqlite.Connection) -> None:

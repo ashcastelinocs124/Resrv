@@ -22,18 +22,26 @@ router = APIRouter(
     dependencies=[Depends(require_staff)],
 )
 
-CHAT_MODEL = "gpt-4o-mini"
+CHAT_MODEL = "gpt-5.4-mini"
 HISTORY_LIMIT = 8
 
 # Allowlist for the model dropdown. Add to this list as new OpenAI chat
 # models are validated. Anything outside this set is rejected with 400 so
 # users can't bill the org against arbitrary model names.
+#
+# Source: https://developers.openai.com/api/docs/models (GPT-5.x lineup) +
+# the still-available legacy 4.x families. Order is "newest first" so the
+# default GPT-5.4-mini sits near the top of the dropdown.
 ALLOWED_MODELS: list[dict[str, str]] = [
-    {"id": "gpt-4o-mini",   "label": "GPT-4o mini (fast, cheap)"},
-    {"id": "gpt-4o",        "label": "GPT-4o (balanced)"},
-    {"id": "gpt-4-turbo",   "label": "GPT-4 Turbo"},
-    {"id": "gpt-4.1-mini",  "label": "GPT-4.1 mini"},
-    {"id": "gpt-4.1",       "label": "GPT-4.1"},
+    {"id": "gpt-5.5",       "label": "GPT-5.5 (flagship)"},
+    {"id": "gpt-5.4",       "label": "GPT-5.4 (balanced)"},
+    {"id": "gpt-5.4-mini",  "label": "GPT-5.4 mini (default — fast, cheap)"},
+    {"id": "gpt-5.4-nano",  "label": "GPT-5.4 nano (cheapest)"},
+    {"id": "gpt-4.1",       "label": "GPT-4.1 (legacy)"},
+    {"id": "gpt-4.1-mini",  "label": "GPT-4.1 mini (legacy)"},
+    {"id": "gpt-4o",        "label": "GPT-4o (legacy)"},
+    {"id": "gpt-4o-mini",   "label": "GPT-4o mini (legacy)"},
+    {"id": "o3-mini",       "label": "o3-mini (reasoning)"},
 ]
 _ALLOWED_MODEL_IDS = {m["id"] for m in ALLOWED_MODELS}
 

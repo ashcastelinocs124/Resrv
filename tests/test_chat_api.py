@@ -165,9 +165,9 @@ async def test_get_models_returns_allowlist(client, db):
     r = await client.get("/api/analytics/chat/models", headers=h)
     assert r.status_code == 200
     body = r.json()
-    assert body["default"] == "gpt-4o-mini"
+    assert body["default"] == "gpt-5.4-mini"
     ids = [m["id"] for m in body["models"]]
-    assert "gpt-4o-mini" in ids and "gpt-4o" in ids
+    assert "gpt-5.4-mini" in ids and "gpt-5.5" in ids and "gpt-4o" in ids
 
 
 async def test_post_chat_uses_default_model_when_unspecified(
@@ -177,7 +177,7 @@ async def test_post_chat_uses_default_model_when_unspecified(
     await client.post(
         "/api/analytics/chat", headers=h, json={"message": "hi"}
     )
-    assert mock_openai["call"]["model"] == "gpt-4o-mini"
+    assert mock_openai["call"]["model"] == "gpt-5.4-mini"
 
 
 async def test_post_chat_passes_through_allowed_model(

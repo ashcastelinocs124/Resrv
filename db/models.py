@@ -865,6 +865,123 @@ async def get_analytics_snapshots(
     return _rows_to_dicts(await cursor.fetchall())
 
 
+# ── Chat ─────────────────────────────────────────────────────────────────
+
+
+async def create_conversation(
+    *, staff_user_id: int, first_message: str
+) -> dict[str, Any]:
+    title = (first_message or "New chat").strip()[:60] or "New chat"
+    db = await get_db()
+    cursor = await db.execute(
+        "INSERT INTO chat_conversations (staff_user_id, title) "
+        "VALUES (?, ?) RETURNING *",
+        (staff_user_id, title),
+    )
+    row = dict(await cursor.fetchone())
+    await db.commit()
+    return row
+
+
+async def list_conversations(staff_user_id: int) -> list[dict[str, Any]]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT id, title, created_at, updated_at "
+        "FROM chat_conversations "
+        "WHERE staff_user_id = ? "
+        "ORDER BY updated_at DESC",
+        (staff_user_id,),
+    )
+    return _rows_to_dicts(await cursor.fetchall())
+
+
+async def get_conversation(
+    conversation_id: int, *, staff_user_id: int
+) -> dict[str, Any] | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM chat_conversations WHERE id = ? AND staff_user_id = ?",
+        (conversation_id, staff_user_id),
+    )
+    return _row_to_dict(await cursor.fetchone())
+
+
+async def get_conversation_messages(
+    conversation_id: int, *, staff_user_id: int
+) -> list[dict[str, Any]] | None:
+    """Return all messages for a conversation owned by this staff user.
+
+    Returns None when the conversation doesn't exist or isn't owned by the
+    caller — distinct from "exists but empty" so the API can 404.
+    """
+    if await get_conversation(
+        conversation_id, staff_user_id=staff_user_id
+    ) is None:
+        return None
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM chat_messages "
+        "WHERE conversation_id = ? "
+        "ORDER BY id ASC",
+        (conversation_id,),
+    )
+    return _rows_to_dicts(await cursor.fetchall())
+
+
+async def get_recent_messages(
+    conversation_id: int, *, limit: int = 8
+) -> list[dict[str, Any]]:
+    """Most-recent ``limit`` messages, returned oldest-first."""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM chat_messages "
+        "WHERE conversation_id = ? "
+        "ORDER BY id DESC LIMIT ?",
+        (conversation_id, limit),
+    )
+    rows = _rows_to_dicts(await cursor.fetchall())
+    return list(reversed(rows))
+
+
+async def append_message(
+    conversation_id: int,
+    *,
+    role: str,
+    content: str,
+    tool_call_id: str | None = None,
+    tool_calls_json: str | None = None,
+) -> dict[str, Any]:
+    db = await get_db()
+    cursor = await db.execute(
+        "INSERT INTO chat_messages "
+        "(conversation_id, role, content, tool_call_id, tool_calls_json) "
+        "VALUES (?, ?, ?, ?, ?) RETURNING *",
+        (conversation_id, role, content, tool_call_id, tool_calls_json),
+    )
+    row = dict(await cursor.fetchone())
+    await db.execute(
+        "UPDATE chat_conversations SET updated_at = datetime('now') WHERE id = ?",
+        (conversation_id,),
+    )
+    await db.commit()
+    return row
+
+
+async def delete_conversation(
+    conversation_id: int, *, staff_user_id: int
+) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM chat_conversations WHERE id = ? AND staff_user_id = ?",
+        (conversation_id, staff_user_id),
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+# ── Analytics ───────────────────────────────────────────────────────────
+
+
 async def compute_live_today_stats() -> list[dict[str, Any]]:
     """Compute analytics for today from live queue_entries data."""
     db = await get_db()

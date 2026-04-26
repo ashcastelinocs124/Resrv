@@ -15,6 +15,7 @@ async def init_db() -> aiosqlite.Connection:
     await _create_tables(_db)
     await _migrate(_db)
     await _seed_machines(_db)
+    await _seed_colleges(_db)
     await _seed_staff(_db)
     await _seed_settings(_db)
     await _backfill_main_units(_db)
@@ -58,13 +59,19 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             archived_at  TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS colleges (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT    NOT NULL,
+            archived_at TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS users (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             discord_id   TEXT    UNIQUE NOT NULL,
             discord_name TEXT,
             email        TEXT    UNIQUE,
             verified     INTEGER NOT NULL DEFAULT 0,
-            college      TEXT,
+            college_id   INTEGER REFERENCES colleges(id),
             major        TEXT,
             created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
         );
@@ -260,6 +267,38 @@ async def _migrate(db: aiosqlite.Connection) -> None:
             "ALTER TABLE analytics_snapshots ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0"
         )
 
+    # Colleges table — may be missing on upgrades.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS colleges (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL,
+            archived_at TEXT
+        )
+        """
+    )
+    # Partial unique index AFTER the table exists (learnings.md 2026-04-22).
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_colleges_name_active "
+        "ON colleges(name) WHERE archived_at IS NULL"
+    )
+
+    # Add users.college_id (nullable FK).
+    cursor = await db.execute("PRAGMA table_info(users)")
+    user_cols_v2 = {row[1] for row in await cursor.fetchall()}
+    if "college_id" not in user_cols_v2:
+        await db.execute(
+            "ALTER TABLE users ADD COLUMN college_id INTEGER REFERENCES colleges(id)"
+        )
+
+    # Drop legacy users.college (free-text, replaced by FK). Safe on SQLite >= 3.35.
+    if "college" in user_cols_v2:
+        await db.execute("ALTER TABLE users DROP COLUMN college")
+
+    # Re-signup wipe: any user previously marked registered=1 must re-pick a college.
+    # Idempotent — once flipped to 0 they no longer match the predicate.
+    await db.execute("UPDATE users SET registered = 0 WHERE registered = 1")
+
     # Chat tables (analytics chatbot) — additive on upgrade.
     await db.execute(
         """
@@ -361,4 +400,36 @@ async def _seed_machines(db: aiosqlite.Connection) -> None:
         await db.execute(
             "INSERT OR IGNORE INTO machines (name, slug) VALUES (?, ?)",
             (name, slug),
+        )
+
+
+async def _seed_colleges(db: aiosqlite.Connection) -> None:
+    """Seed the standard UIUC colleges if missing. Idempotent."""
+    colleges = [
+        "Grainger College of Engineering",
+        "Gies College of Business",
+        "College of Liberal Arts and Sciences",
+        "College of Agricultural, Consumer and Environmental Sciences",
+        "College of Education",
+        "College of Fine and Applied Arts",
+        "College of Media",
+        "School of Information Sciences",
+        "College of Applied Health Sciences",
+        "Division of General Studies",
+        "School of Social Work",
+        "School of Labor and Employment Relations",
+        "Carle Illinois College of Medicine",
+        "College of Veterinary Medicine",
+        "College of Law",
+    ]
+    for name in colleges:
+        await db.execute(
+            """
+            INSERT INTO colleges (name)
+            SELECT ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM colleges WHERE name = ? AND archived_at IS NULL
+            )
+            """,
+            (name, name),
         )

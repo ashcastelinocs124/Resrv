@@ -419,7 +419,7 @@ async def register_user(
     full_name: str,
     email: str,
     major: str,
-    college: str,
+    college_id: int | None,
     graduation_year: str,
 ) -> None:
     """Save signup profile and mark user as registered."""
@@ -427,11 +427,11 @@ async def register_user(
     await db.execute(
         """
         UPDATE users
-        SET full_name = ?, email = ?, major = ?, college = ?,
+        SET full_name = ?, email = ?, major = ?, college_id = ?,
             graduation_year = ?, registered = 1
         WHERE id = ?
         """,
-        (full_name, email, major, college, graduation_year, user_id),
+        (full_name, email, major, college_id, graduation_year, user_id),
     )
     await db.commit()
 
@@ -442,7 +442,7 @@ async def update_user_profile(
     full_name: str,
     email: str,
     major: str,
-    college: str,
+    college_id: int | None,
     graduation_year: str,
 ) -> None:
     """Update an existing user's profile fields."""
@@ -450,11 +450,11 @@ async def update_user_profile(
     await db.execute(
         """
         UPDATE users
-        SET full_name = ?, email = ?, major = ?, college = ?,
+        SET full_name = ?, email = ?, major = ?, college_id = ?,
             graduation_year = ?
         WHERE id = ?
         """,
-        (full_name, email, major, college, graduation_year, user_id),
+        (full_name, email, major, college_id, graduation_year, user_id),
     )
     await db.commit()
 

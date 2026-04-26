@@ -1,5 +1,29 @@
 # Learnings
 
+### 2026-04-26 — Stale `position` column in queue_entries
+**Ref:** Architecture > web/src/components/QueueCard.tsx, MachineColumn.tsx
+- **What:** `queue_entries.position` is stamped at join time and never renumbered. After two earlier entries finish, the third user still reads as `#3` even though they're effectively first in line. Discord embed already enumerated `enumerate(waiting, start=1)`; only the web card was wrong.
+- **Why it matters:** Users see a stale rank that contradicts reality. Server-side renumbering on every promotion/leave would cost a write per mutation.
+- **Fix/Pattern:** Compute display rank in the *parent* component (`MachineColumn` filters waiting + indexes), pass it to `QueueCard` as `displayPosition` prop. Keep `entry.position` for ordering only. Serving entries render "serving" instead of a number.
+
+### 2026-04-26 — SSE chat streaming uses fetch + ReadableStream, not EventSource
+**Ref:** Architecture > web/src/api/client.ts > postChatStream
+- **What:** EventSource is the obvious primitive for SSE in the browser, but it can't carry custom headers (no Authorization). The chat API is gated by Bearer token, so EventSource is unusable. Use `fetch()` with `Accept: text/event-stream` and read `response.body` as a ReadableStream, decoding chunks and splitting on `\n\n`.
+- **Why it matters:** Picking EventSource on a token-auth endpoint either forces auth into the URL (terrible — query strings get logged) or a cookie session (mismatch with our Bearer flow). fetch streaming is the only clean path for the existing auth model.
+- **Fix/Pattern:** `fetch(url, {method:"POST", headers:{Accept:"text/event-stream", Authorization:"Bearer …"}})`, then `response.body.getReader()` + `TextDecoder({stream:true})` to handle UTF-8 across chunk boundaries. Buffer until a blank line, parse `data: <json>` payloads, dispatch event-type handlers.
+
+### 2026-04-26 — Mocking OpenAI streaming requires an `__aiter__` stub
+**Ref:** Architecture > tests/test_chat_api.py > mock_openai_stream
+- **What:** Non-streaming `chat.completions.create` returns an awaitable that yields a `ChatCompletion`-shaped object with `.choices[0].message.content`. The streaming variant returns an async-iterable that yields chunks with `.choices[0].delta.content`. A non-streaming mock breaks streaming tests.
+- **Why it matters:** Easy to write a single `mock_openai` fixture that "looks right" but blows up the moment a route asks for `stream=True`.
+- **Fix/Pattern:** Two fixtures. Streaming fixture returns an object whose `__aiter__` yields a sequence of `SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=piece))])`. Assert `kwargs.get("stream") is True` inside the mock so the wrong fixture fails loudly.
+
+### 2026-04-26 — User-selectable model needs a server-side allowlist
+**Ref:** Architecture > api/routes/chat.py > ALLOWED_MODELS
+- **What:** A frontend dropdown that posts `model: <string>` straight to OpenAI lets any logged-in user invoke any model the org has access to — including expensive ones — by hand-crafting a request.
+- **Why it matters:** Cost surface and prompt-injection surface both grow with the model list. A trimmed allowlist is the only way to keep both bounded.
+- **Fix/Pattern:** Maintain `ALLOWED_MODELS` (id + label) in the chat router. `_resolve_model(requested)` returns the default if `None`, raises 400 if the requested string isn't in the set. `GET /chat/models` returns the same list so the frontend dropdown can't drift from the server's view of what's permissible.
+
 ### 2026-04-22 — Pydantic Settings rejects unknown .env keys by default
 **Ref:** Architecture > config.py
 - **What:** After the `.env` picked up an unrelated `HETZNER_TOKEN`, `Settings()` began raising `ValidationError: extra_forbidden` at import time, blocking all tests and app startup.

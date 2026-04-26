@@ -51,10 +51,16 @@ Update `memory.md` whenever something significant changes. Read it at the start 
 
 ### 2026-04-26 — Analytics Chatbot
 - New `chat_conversations` + `chat_messages` tables (FK + `ON DELETE CASCADE`, role CHECK constraint, scaffolding columns for future tool-use).
-- Per-staff scoped multi-turn chat at `/api/analytics/chat` (POST + list/get/delete) gated by `require_staff`. OpenAI `gpt-4o-mini`, lazy-instantiated client (degrades to 503 if key missing).
+- Per-staff scoped multi-turn chat at `/api/analytics/chat` (POST + list/get/delete) gated by `require_staff`. Lazy-instantiated OpenAI client (degrades to 503 if key missing).
 - System prompt embeds the same `compute_analytics_response` payload the dashboard renders, so chat answers can never diverge from the visible data. Last 8 messages reach the model; the full thread persists.
-- Floating "Ask the data" panel mounted on `/admin/analytics`: conversation list, suggested prompts, optimistic UI, markdown-rendered assistant replies via `react-markdown`.
-- 12 chat tests added (DB + API + cross-user isolation).
+- Floating "Ask the data" panel mounted on `/admin/analytics`: conversation list, suggested prompts, optimistic UI, markdown-rendered assistant replies via `react-markdown`. Panel sized at min(560,viewport-3rem) × 80vh.
+- SSE streaming via `POST /api/analytics/chat/stream` (fetch + ReadableStream because EventSource can't carry the Bearer token). Frontend renders deltas live, then re-fetches the canonical thread on `done`.
+- Server-side model allowlist (`ALLOWED_MODELS` in `api/routes/chat.py`) — currently `gpt-5.4`, `gpt-5.4-mini` (default), `gpt-4o`. Frontend dropdown driven by `GET /chat/models`; selection persists to `localStorage` under `reserv.chat.model`. Unknown model strings → 400.
+- 17 chat tests added (DB + non-streaming API + streaming SSE + cross-user isolation + model allowlist).
+
+### 2026-04-26 — Queue display rank fix (web)
+- `queue_entries.position` is a join-time stamp and was leaking into the public web card as a stale `#3` after earlier entries finished. Discord embed already renumbered.
+- Fixed by computing display rank in `MachineColumn` (filter waiting + index) and passing `displayPosition` to `QueueCard`. Serving entries now render "serving" instead of a number. No DB writes per mutation.
 
 ### 2026-04-22 — Multi-Unit Machines
 - New `machine_units` table; every existing machine backfilled with one "Main" unit. `queue_entries.unit_id` stamped on promotion.

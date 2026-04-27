@@ -290,4 +290,4 @@ The test suite uses an in-memory SQLite DB per test (`db` fixture in `tests/conf
 
 ## License
 
-MIT
+This project is licensed under the MIT License — see [LICENSE](./LICENSE) for the full text.

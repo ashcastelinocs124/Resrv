@@ -178,3 +178,56 @@ async def test_unspecified_bucket_aggregates_null_college_id(
     assert unspec is not None
     assert unspec["total_jobs"] >= 1
     assert unspec["college_id"] == 0
+
+
+# ── Feedback rating accents on summary/machines/colleges ─────────────────
+
+
+async def _seed_completed_entry(discord_id: str) -> dict:
+    """Seed a user + completed queue entry; returns the entry dict."""
+    user = await models.get_or_create_user(discord_id=discord_id, discord_name="u")
+    machines = await models.get_machines()
+    entry = await models.join_queue(user["id"], machines[0]["id"])
+    await models.update_entry_status(entry["id"], "serving")
+    await models.update_entry_status(entry["id"], "completed", job_successful=1)
+    return entry
+
+
+async def test_analytics_summary_avg_rating_none_when_empty(
+    client: AsyncClient, db
+):
+    h = await _admin_headers(client)
+    body = (
+        await client.get("/api/analytics/summary?period=week", headers=h)
+    ).json()
+    assert body["summary"]["rating_count"] >= 0
+    if body["summary"]["rating_count"] == 0:
+        assert body["summary"]["avg_rating"] is None
+
+
+async def test_analytics_summary_avg_rating_matches(client: AsyncClient, db):
+    e1 = await _seed_completed_entry(discord_id="ar-1")
+    e2 = await _seed_completed_entry(discord_id="ar-2")
+    await models.create_feedback(queue_entry_id=e1["id"], rating=4, comment=None)
+    await models.create_feedback(queue_entry_id=e2["id"], rating=5, comment=None)
+    h = await _admin_headers(client)
+    body = (
+        await client.get("/api/analytics/summary?period=week", headers=h)
+    ).json()
+    assert body["summary"]["rating_count"] == 2
+    assert body["summary"]["avg_rating"] == 4.5
+
+
+async def test_analytics_machines_and_colleges_have_rating_fields(
+    client: AsyncClient, db
+):
+    h = await _admin_headers(client)
+    body = (
+        await client.get("/api/analytics/summary?period=week", headers=h)
+    ).json()
+    if body["machines"]:
+        assert "avg_rating" in body["machines"][0]
+        assert "rating_count" in body["machines"][0]
+    if body["colleges"]:
+        assert "avg_rating" in body["colleges"][0]
+        assert "rating_count" in body["colleges"][0]

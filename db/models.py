@@ -1230,7 +1230,7 @@ async def feedback_aggregates_overall(
     college_id: int | None = None, machine_id: int | None = None,
 ) -> dict:
     db = await get_db()
-    where = ["f.created_at BETWEEN ? AND ?"]
+    where = ["date(f.created_at) BETWEEN date(?) AND date(?)"]
     params: list = [start, end]
     if college_id is not None:
         where.append("u.college_id = ?")
@@ -1253,7 +1253,7 @@ async def feedback_aggregates_by_machine(
     start: str, end: str, *, college_id: int | None = None,
 ) -> dict[int, dict]:
     db = await get_db()
-    where = ["f.created_at BETWEEN ? AND ?"]
+    where = ["date(f.created_at) BETWEEN date(?) AND date(?)"]
     params: list = [start, end]
     if college_id is not None:
         where.append("u.college_id = ?")
@@ -1283,7 +1283,7 @@ async def feedback_aggregates_by_college(
     start: str, end: str, *, machine_id: int | None = None,
 ) -> dict[int, dict]:
     db = await get_db()
-    where = ["f.created_at BETWEEN ? AND ?"]
+    where = ["date(f.created_at) BETWEEN date(?) AND date(?)"]
     params: list = [start, end]
     if machine_id is not None:
         where.append("qe.machine_id = ?")

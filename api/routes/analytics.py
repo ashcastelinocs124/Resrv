@@ -31,6 +31,8 @@ class MachineStat(BaseModel):
     failure_count: int
     peak_hour: int | None
     ai_summary: str | None
+    avg_rating: float | None = None
+    rating_count: int = 0
 
 
 class DailyBreakdown(BaseModel):
@@ -48,6 +50,8 @@ class AnalyticsSummary(BaseModel):
     no_show_count: int
     cancelled_count: int
     failure_count: int
+    avg_rating: float | None = None
+    rating_count: int = 0
 
 
 class CollegeStat(BaseModel):
@@ -58,6 +62,8 @@ class CollegeStat(BaseModel):
     unique_users: int
     avg_wait_mins: float | None
     avg_serve_mins: float | None
+    avg_rating: float | None = None
+    rating_count: int = 0
 
 
 class AnalyticsResponse(BaseModel):
@@ -395,6 +401,49 @@ async def compute_analytics_response(
         college_id=college_id,
         machine_id=machine_id,
     )
+
+    # Merge feedback aggregates into the summary / machines / colleges blocks.
+    overall = await models.feedback_aggregates_overall(
+        sd, ed, college_id=college_id, machine_id=machine_id
+    )
+    summary = agg.get("summary", {})
+    summary["avg_rating"] = (
+        round(overall["avg_rating"], 2) if overall["avg_rating"] is not None else None
+    )
+    summary["rating_count"] = overall["rating_count"] or 0
+
+    by_machine = await models.feedback_aggregates_by_machine(
+        sd, ed, college_id=college_id
+    )
+    for m in agg.get("machines", []):
+        ratings = by_machine.get(m["machine_id"])
+        if ratings is not None:
+            m["avg_rating"] = (
+                round(ratings["avg_rating"], 2)
+                if ratings["avg_rating"] is not None
+                else None
+            )
+            m["rating_count"] = ratings["rating_count"] or 0
+        else:
+            m["avg_rating"] = None
+            m["rating_count"] = 0
+
+    by_college = await models.feedback_aggregates_by_college(
+        sd, ed, machine_id=machine_id
+    )
+    for c in colleges:
+        ratings = by_college.get(c["college_id"])
+        if ratings is not None:
+            c["avg_rating"] = (
+                round(ratings["avg_rating"], 2)
+                if ratings["avg_rating"] is not None
+                else None
+            )
+            c["rating_count"] = ratings["rating_count"] or 0
+        else:
+            c["avg_rating"] = None
+            c["rating_count"] = 0
+
     return {
         "period": p,
         "start_date": sd,

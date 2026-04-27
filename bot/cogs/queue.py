@@ -19,6 +19,67 @@ log = logging.getLogger(__name__)
 _ILLINOIS_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@illinois\.edu$", re.IGNORECASE)
 
 
+class _LeaveServingButton(discord.ui.Button):
+    """Button on LeaveServingView. ``mode`` is 'finish' or 'cancel'."""
+
+    def __init__(self, *, mode: str, label: str, style: discord.ButtonStyle,
+                  custom_id: str) -> None:
+        super().__init__(label=label, style=style, custom_id=custom_id)
+        self._mode = mode
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view: "LeaveServingView" = self.view  # type: ignore[assignment]
+        for child in view.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+
+        if self._mode == "finish":
+            await models.update_entry_status(
+                view._entry_id, "completed", job_successful=1,
+            )
+            await interaction.response.edit_message(
+                content=f"Marked **{view._machine_name}** as finished. "
+                        "Check your DMs to rate the visit.",
+                view=view,
+            )
+            from bot.cogs.dm import send_rating_dm
+            await send_rating_dm(
+                interaction.user,
+                queue_entry_id=view._entry_id,
+                machine_name=view._machine_name,
+            )
+        else:  # cancel
+            await models.leave_queue(view._entry_id)
+            await interaction.response.edit_message(
+                content=f"Session on **{view._machine_name}** cancelled.",
+                view=view,
+            )
+
+        await view._bot.update_queue_embeds(view._machine_id)
+
+
+class LeaveServingView(discord.ui.View):
+    """Ephemeral two-button choice when a serving user clicks Leave Queue."""
+
+    def __init__(self, *, bot: "ReservBot", entry_id: int, machine_id: int,
+                  machine_name: str) -> None:
+        super().__init__(timeout=120)
+        self._bot = bot
+        self._entry_id = entry_id
+        self._machine_id = machine_id
+        self._machine_name = machine_name
+        self.add_item(_LeaveServingButton(
+            mode="finish", label="Finish early",
+            style=discord.ButtonStyle.success,
+            custom_id=f"leave_finish:{entry_id}",
+        ))
+        self.add_item(_LeaveServingButton(
+            mode="cancel", label="Cancel session",
+            style=discord.ButtonStyle.danger,
+            custom_id=f"leave_cancel:{entry_id}",
+        ))
+
+
 class _CollegeSelect(discord.ui.Select):
     """Select subclass exposing a writable ``values`` attribute for tests."""
 
@@ -425,6 +486,21 @@ class QueueCog(commands.Cog):
         if entry is None:
             await interaction.response.send_message(
                 f"You are not in the queue for **{machine['name']}**.",
+                ephemeral=True,
+            )
+            return
+
+        if entry["status"] == "serving":
+            view = LeaveServingView(
+                bot=self.bot,
+                entry_id=entry["id"],
+                machine_id=machine_id,
+                machine_name=machine["name"],
+            )
+            await interaction.response.send_message(
+                f"Are you finishing your session on **{machine['name']}** "
+                f"or cancelling?",
+                view=view,
                 ephemeral=True,
             )
             return

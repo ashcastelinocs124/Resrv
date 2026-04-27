@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AnalyticsPeriod, CollegeSummary } from "../api/types";
-import { listColleges } from "../api/client";
+import { exportAnalytics, listColleges } from "../api/client";
 import { useAnalytics } from "../hooks/useAnalytics";
 import { SummaryCards } from "../components/analytics/SummaryCards";
 import { AISummary } from "../components/analytics/AISummary";
@@ -87,6 +87,27 @@ export function Analytics() {
             className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50"
           >
             {loading ? "Refreshing..." : "Refresh"}
+          </button>
+
+          <button
+            onClick={() =>
+              exportAnalytics("csv", period, selectedCollegeId, null).catch(
+                (e) => alert(`Export failed: ${e.message ?? e}`),
+              )
+            }
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors cursor-pointer"
+          >
+            Export CSV
+          </button>
+          <button
+            onClick={() =>
+              exportAnalytics("pdf", period, selectedCollegeId, null).catch(
+                (e) => alert(`Export failed: ${e.message ?? e}`),
+              )
+            }
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors cursor-pointer"
+          >
+            Export PDF
           </button>
         </div>
       </div>

@@ -46,6 +46,43 @@ export async function request<T>(
   return res.json();
 }
 
+export async function exportAnalytics(
+  format: "csv" | "pdf",
+  period: string,
+  collegeId: number | null,
+  machineId: number | null,
+): Promise<void> {
+  const qs = new URLSearchParams({ format, period });
+  if (collegeId != null) qs.set("college_id", String(collegeId));
+  if (machineId != null) qs.set("machine_id", String(machineId));
+  const headers: Record<string, string> = {};
+  const token = getAuthToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/analytics/export?${qs.toString()}`, {
+    headers,
+  });
+  if (res.status === 401) {
+    setAuthToken(null);
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const disp = res.headers.get("content-disposition") ?? "";
+  const m = disp.match(/filename="([^"]+)"/);
+  const filename = m?.[1] ?? `reserv-analytics.${format}`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // -- Auth --
 
 export const login = (username: string, password: string) =>

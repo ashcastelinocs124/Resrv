@@ -231,3 +231,76 @@ async def test_analytics_machines_and_colleges_have_rating_fields(
     if body["colleges"]:
         assert "avg_rating" in body["colleges"][0]
         assert "rating_count" in body["colleges"][0]
+
+
+# ---------------------------------------------------------------------------- #
+# /api/analytics/export
+# ---------------------------------------------------------------------------- #
+
+async def test_export_requires_auth(client: AsyncClient, db):
+    res = await client.get("/api/analytics/export?format=csv")
+    assert res.status_code == 401
+
+
+async def test_export_csv_returns_section_headers(
+    client: AsyncClient, db
+):
+    h = await _admin_headers(client)
+    res = await client.get(
+        "/api/analytics/export?format=csv&period=week", headers=h,
+    )
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/csv")
+    assert "attachment" in res.headers.get("content-disposition", "")
+    body = res.text
+    assert "## Summary" in body
+    assert "## Machines" in body
+    assert "## Colleges" in body
+    assert "total_jobs" in body
+
+
+async def test_export_pdf_returns_application_pdf(
+    client: AsyncClient, db
+):
+    h = await _admin_headers(client)
+    res = await client.get(
+        "/api/analytics/export?format=pdf&period=week", headers=h,
+    )
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/pdf"
+    assert res.content.startswith(b"%PDF")
+    assert b"%%EOF" in res.content
+
+
+async def test_export_invalid_format_returns_400(client: AsyncClient, db):
+    h = await _admin_headers(client)
+    res = await client.get(
+        "/api/analytics/export?format=xml&period=week", headers=h,
+    )
+    assert res.status_code == 400
+
+
+async def test_export_csv_honors_college_filter(client: AsyncClient, db):
+    college_a = await models.create_college("Export College A")
+    e1 = await _seed_completed_entry(discord_id="exp-1")
+    # tag user 1 with college A
+    user_a = await models.get_user_by_discord_id("exp-1")
+    db_conn = await models.get_db()
+    await db_conn.execute(
+        "UPDATE users SET college_id = ? WHERE id = ?",
+        (college_a["id"], user_a["id"]),
+    )
+    await db_conn.commit()
+    await models.create_feedback(
+        queue_entry_id=e1["id"], rating=5, comment=None,
+    )
+
+    h = await _admin_headers(client)
+    res = await client.get(
+        f"/api/analytics/export?format=csv&period=week"
+        f"&college_id={college_a['id']}",
+        headers=h,
+    )
+    assert res.status_code == 200
+    body = res.text
+    assert f"filter_college_id,{college_a['id']}" in body

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import csv
+import io
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from api.auth import require_staff
@@ -475,6 +478,197 @@ async def get_today_stats() -> dict:
         for s in stats
     ]
     return {"date": today, "machines": machines}
+
+
+def _fmt(v: Any) -> str:
+    """CSV cell formatter: None -> '', floats -> 1 decimal, else str."""
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        return f"{v:.1f}"
+    return str(v)
+
+
+def _build_csv(resp: AnalyticsResponse, machine_id: int | None,
+               college_id: int | None) -> bytes:
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["## Summary"])
+    w.writerow(["metric", "value"])
+    w.writerow(["period", resp.period])
+    w.writerow(["start_date", resp.start_date])
+    w.writerow(["end_date", resp.end_date])
+    if machine_id is not None:
+        w.writerow(["filter_machine_id", machine_id])
+    if college_id is not None:
+        w.writerow(["filter_college_id", college_id])
+    s = resp.summary
+    for field in ("total_jobs", "completed_jobs", "unique_users",
+                   "avg_wait_mins", "avg_serve_mins",
+                   "no_show_count", "cancelled_count", "failure_count",
+                   "avg_rating", "rating_count"):
+        w.writerow([field, _fmt(getattr(s, field))])
+
+    w.writerow([])
+    w.writerow(["## Machines"])
+    w.writerow([
+        "machine_id", "machine_name", "total_jobs", "completed_jobs",
+        "unique_users", "avg_wait_mins", "avg_serve_mins",
+        "no_show_count", "cancelled_count", "failure_count",
+        "peak_hour", "avg_rating", "rating_count",
+    ])
+    for m in resp.machines:
+        w.writerow([
+            m.machine_id, m.machine_name, m.total_jobs, m.completed_jobs,
+            m.unique_users, _fmt(m.avg_wait_mins), _fmt(m.avg_serve_mins),
+            m.no_show_count, m.cancelled_count, m.failure_count,
+            _fmt(m.peak_hour), _fmt(m.avg_rating), m.rating_count,
+        ])
+
+    w.writerow([])
+    w.writerow(["## Colleges"])
+    w.writerow([
+        "college_id", "college_name", "total_jobs", "completed_jobs",
+        "unique_users", "avg_wait_mins", "avg_serve_mins",
+        "avg_rating", "rating_count",
+    ])
+    for c in resp.colleges:
+        w.writerow([
+            c.college_id, c.college_name, c.total_jobs, c.completed_jobs,
+            c.unique_users, _fmt(c.avg_wait_mins), _fmt(c.avg_serve_mins),
+            _fmt(c.avg_rating), c.rating_count,
+        ])
+
+    return buf.getvalue().encode("utf-8")
+
+
+def _build_pdf(resp: AnalyticsResponse, machine_id: int | None,
+               college_id: int | None) -> bytes:
+    from fpdf import FPDF
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 8, f"Reserv Analytics - {resp.period.title()}",
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 5, f"{resp.start_date} to {resp.end_date}",
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 5,
+             f"Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+             new_x="LMARGIN", new_y="NEXT")
+    if machine_id is not None or college_id is not None:
+        bits = []
+        if machine_id is not None:
+            bits.append(f"machine_id={machine_id}")
+        if college_id is not None:
+            bits.append(f"college_id={college_id}")
+        pdf.cell(0, 5, "Filters: " + ", ".join(bits),
+                 new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+    def _section(title: str) -> None:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 6, title, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
+
+    def _table(headers: list[str], rows: list[list[str]],
+                widths: list[int]) -> None:
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(230, 230, 230)
+        for h, w in zip(headers, widths):
+            pdf.cell(w, 6, h, border=1, fill=True)
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 9)
+        shade = False
+        for row in rows:
+            if shade:
+                pdf.set_fill_color(245, 245, 245)
+            for cell, w in zip(row, widths):
+                pdf.cell(w, 5, cell[:max(1, int(w / 1.7))],
+                         border=1, fill=shade)
+            pdf.ln()
+            shade = not shade
+
+    s = resp.summary
+    _section("Summary")
+    _table(
+        ["Metric", "Value"],
+        [
+            ["Total jobs", _fmt(s.total_jobs)],
+            ["Completed", _fmt(s.completed_jobs)],
+            ["Unique users", _fmt(s.unique_users)],
+            ["Avg wait (min)", _fmt(s.avg_wait_mins)],
+            ["Avg serve (min)", _fmt(s.avg_serve_mins)],
+            ["No-shows", _fmt(s.no_show_count)],
+            ["Cancelled", _fmt(s.cancelled_count)],
+            ["Failures", _fmt(s.failure_count)],
+            ["Avg rating", _fmt(s.avg_rating)],
+            ["Ratings", _fmt(s.rating_count)],
+        ],
+        [60, 30],
+    )
+
+    pdf.ln(3)
+    _section("By Machine")
+    _table(
+        ["Name", "Jobs", "Done", "Wait", "Serve", "Rating", "n"],
+        [
+            [m.machine_name, _fmt(m.total_jobs), _fmt(m.completed_jobs),
+             _fmt(m.avg_wait_mins), _fmt(m.avg_serve_mins),
+             _fmt(m.avg_rating), _fmt(m.rating_count)]
+            for m in resp.machines
+        ],
+        [55, 18, 18, 18, 18, 22, 14],
+    )
+
+    pdf.ln(3)
+    _section("By College")
+    _table(
+        ["Name", "Jobs", "Done", "Users", "Rating", "n"],
+        [
+            [c.college_name, _fmt(c.total_jobs), _fmt(c.completed_jobs),
+             _fmt(c.unique_users), _fmt(c.avg_rating), _fmt(c.rating_count)]
+            for c in resp.colleges
+        ],
+        [70, 18, 18, 22, 22, 14],
+    )
+
+    out = pdf.output()
+    if isinstance(out, str):
+        return out.encode("latin-1")
+    return bytes(out)
+
+
+@router.get("/export")
+async def export_analytics(
+    format: str = Query(...),
+    period: str | None = "day",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    machine_id: int | None = Query(None),
+    college_id: int | None = Query(None),
+):
+    if format not in ("csv", "pdf"):
+        raise HTTPException(400, detail="format must be 'csv' or 'pdf'")
+    raw = await compute_analytics_response(
+        period, start_date, end_date, machine_id, college_id
+    )
+    resp = AnalyticsResponse(**raw) if isinstance(raw, dict) else raw
+    stamp = datetime.utcnow().strftime("%Y%m%d")
+    base = f"reserv-analytics-{resp.period}-{stamp}"
+    if format == "csv":
+        body = _build_csv(resp, machine_id, college_id)
+        return Response(
+            content=body, media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{base}.csv"'},
+        )
+    body = _build_pdf(resp, machine_id, college_id)
+    return Response(
+        content=body, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{base}.pdf"'},
+    )
 
 
 @router.get("/summary", response_model=AnalyticsResponse)

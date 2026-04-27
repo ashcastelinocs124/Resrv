@@ -166,6 +166,25 @@ async def test_chat_system_prompt_contains_colleges(
     assert "\"colleges\"" in system_prompt
 
 
+async def test_chat_system_prompt_contains_avg_rating(
+    client, db, mock_openai
+):
+    """The analytics blob fed to the model must include avg_rating
+    so the chatbot can answer 'which machine has the highest rating?'."""
+    h = await _admin_headers(client)
+    res = await client.post(
+        "/api/analytics/chat",
+        headers=h,
+        json={"message": "ignored, mock returns canned reply"},
+    )
+    assert res.status_code == 200
+    sent_messages = mock_openai["call"]["messages"]
+    system_prompt = next(
+        m["content"] for m in sent_messages if m["role"] == "system"
+    )
+    assert "\"avg_rating\"" in system_prompt
+
+
 async def test_post_chat_requires_staff(client, db):
     r = await client.post("/api/analytics/chat", json={"message": "hi"})
     assert r.status_code == 401

@@ -116,7 +116,9 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             avg_wait_mins  REAL,
             avg_serve_mins REAL,
             peak_hour      INTEGER,
-            ai_summary     TEXT
+            ai_summary     TEXT,
+            avg_rating     REAL,
+            rating_count   INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS settings (
@@ -140,6 +142,15 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             content         TEXT    NOT NULL,
             tool_call_id    TEXT,
             tool_calls_json TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS feedback (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            queue_entry_id  INTEGER NOT NULL UNIQUE
+                            REFERENCES queue_entries(id) ON DELETE CASCADE,
+            rating          INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            comment         TEXT,
             created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -298,6 +309,34 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     # Re-signup wipe: any user previously marked registered=1 must re-pick a college.
     # Idempotent — once flipped to 0 they no longer match the predicate.
     await db.execute("UPDATE users SET registered = 0 WHERE registered = 1")
+
+    # Feedback table — additive on upgrade.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS feedback (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            queue_entry_id  INTEGER NOT NULL UNIQUE
+                            REFERENCES queue_entries(id) ON DELETE CASCADE,
+            rating          INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            comment         TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_feedback_created_at "
+        "ON feedback(created_at DESC)"
+    )
+
+    cursor = await db.execute("PRAGMA table_info(analytics_snapshots)")
+    snap_cols_v3 = {row[1] for row in await cursor.fetchall()}
+    if "avg_rating" not in snap_cols_v3:
+        await db.execute("ALTER TABLE analytics_snapshots ADD COLUMN avg_rating REAL")
+    if "rating_count" not in snap_cols_v3:
+        await db.execute(
+            "ALTER TABLE analytics_snapshots "
+            "ADD COLUMN rating_count INTEGER NOT NULL DEFAULT 0"
+        )
 
     # Chat tables (analytics chatbot) — additive on upgrade.
     await db.execute(

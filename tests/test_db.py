@@ -532,3 +532,77 @@ async def test_migration_wipes_registered_flag_for_existing_users(db):
     row = await cursor.fetchone()
     assert row["registered"] == 0
 
+
+# ── Feedback schema ─────────────────────────────────────────────────────
+
+
+async def test_feedback_table_exists_with_check_constraint(db):
+    conn = await models.get_db()
+    cursor = await conn.execute("PRAGMA table_info(feedback)")
+    cols = {row[1] for row in await cursor.fetchall()}
+    assert {"id", "queue_entry_id", "rating", "comment", "created_at"} <= cols
+
+
+async def test_feedback_unique_per_queue_entry(db):
+    conn = await models.get_db()
+    user = await models.get_or_create_user(discord_id="ftest1", discord_name="u")
+    machines = await models.get_machines()
+    entry = await models.join_queue(user["id"], machines[0]["id"])
+    await models.update_entry_status(entry["id"], "serving")
+    await models.update_entry_status(entry["id"], "completed", job_successful=1)
+    await conn.execute(
+        "INSERT INTO feedback (queue_entry_id, rating) VALUES (?, ?)",
+        (entry["id"], 5),
+    )
+    await conn.commit()
+    with pytest.raises(Exception):
+        await conn.execute(
+            "INSERT INTO feedback (queue_entry_id, rating) VALUES (?, ?)",
+            (entry["id"], 3),
+        )
+
+
+async def test_feedback_check_blocks_invalid_rating(db):
+    conn = await models.get_db()
+    user = await models.get_or_create_user(discord_id="ftest2", discord_name="u")
+    machines = await models.get_machines()
+    entry = await models.join_queue(user["id"], machines[0]["id"])
+    with pytest.raises(Exception):
+        await conn.execute(
+            "INSERT INTO feedback (queue_entry_id, rating) VALUES (?, ?)",
+            (entry["id"], 0),
+        )
+    with pytest.raises(Exception):
+        await conn.execute(
+            "INSERT INTO feedback (queue_entry_id, rating) VALUES (?, ?)",
+            (entry["id"], 6),
+        )
+
+
+async def test_feedback_cascades_on_queue_entry_delete(db):
+    conn = await models.get_db()
+    user = await models.get_or_create_user(discord_id="ftest3", discord_name="u")
+    machines = await models.get_machines()
+    entry = await models.join_queue(user["id"], machines[0]["id"])
+    await conn.execute(
+        "INSERT INTO feedback (queue_entry_id, rating, comment) VALUES (?, ?, ?)",
+        (entry["id"], 4, "ok"),
+    )
+    await conn.commit()
+    await conn.execute("DELETE FROM queue_entries WHERE id = ?", (entry["id"],))
+    await conn.commit()
+    cursor = await conn.execute(
+        "SELECT COUNT(*) AS cnt FROM feedback WHERE queue_entry_id = ?",
+        (entry["id"],),
+    )
+    row = await cursor.fetchone()
+    assert row["cnt"] == 0
+
+
+async def test_analytics_snapshots_has_rating_columns(db):
+    conn = await models.get_db()
+    cursor = await conn.execute("PRAGMA table_info(analytics_snapshots)")
+    cols = {row[1] for row in await cursor.fetchall()}
+    assert "avg_rating" in cols
+    assert "rating_count" in cols
+

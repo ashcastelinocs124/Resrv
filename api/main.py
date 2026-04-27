@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routes.analytics import router as analytics_router
 from api.routes.auth import router as auth_router
 from api.routes.colleges import router as colleges_router
+from api.routes.feedback import router as feedback_router
 from api.routes.machines import router as machines_router
 from api.routes.queue import router as queue_router
 from api.routes.settings import public_router as public_settings_router, router as settings_router
@@ -39,6 +40,7 @@ app.add_middleware(
 app.include_router(analytics_router)
 app.include_router(auth_router)
 app.include_router(colleges_router)
+app.include_router(feedback_router)
 app.include_router(machines_router)
 app.include_router(queue_router)
 app.include_router(settings_router)

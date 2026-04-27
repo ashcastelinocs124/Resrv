@@ -232,21 +232,24 @@ async def _compute_daily_analytics() -> None:
             """
             SELECT
                 COUNT(*) as total_jobs,
-                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_jobs,
-                SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) as no_show_count,
-                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_count,
-                SUM(CASE WHEN job_successful = 0 THEN 1 ELSE 0 END) as failure_count,
-                COUNT(DISTINCT user_id) as unique_users,
+                SUM(CASE WHEN qe.status = 'completed' THEN 1 ELSE 0 END) as completed_jobs,
+                SUM(CASE WHEN qe.status = 'no_show' THEN 1 ELSE 0 END) as no_show_count,
+                SUM(CASE WHEN qe.status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_count,
+                SUM(CASE WHEN qe.job_successful = 0 THEN 1 ELSE 0 END) as failure_count,
+                COUNT(DISTINCT qe.user_id) as unique_users,
                 AVG(CASE
-                    WHEN serving_at IS NOT NULL
-                    THEN (julianday(serving_at) - julianday(joined_at)) * 24 * 60
+                    WHEN qe.serving_at IS NOT NULL
+                    THEN (julianday(qe.serving_at) - julianday(qe.joined_at)) * 24 * 60
                 END) as avg_wait_mins,
                 AVG(CASE
-                    WHEN completed_at IS NOT NULL AND serving_at IS NOT NULL
-                    THEN (julianday(completed_at) - julianday(serving_at)) * 24 * 60
-                END) as avg_serve_mins
-            FROM queue_entries
-            WHERE machine_id = ? AND date(joined_at) = ?
+                    WHEN qe.completed_at IS NOT NULL AND qe.serving_at IS NOT NULL
+                    THEN (julianday(qe.completed_at) - julianday(qe.serving_at)) * 24 * 60
+                END) as avg_serve_mins,
+                AVG(f.rating)   as avg_rating,
+                COUNT(f.rating) as rating_count
+            FROM queue_entries qe
+            LEFT JOIN feedback f ON f.queue_entry_id = qe.id
+            WHERE qe.machine_id = ? AND date(qe.joined_at) = ?
             """,
             (mid, yesterday),
         )
@@ -283,6 +286,8 @@ async def _compute_daily_analytics() -> None:
             cancelled_count=row["cancelled_count"],
             unique_users=row["unique_users"],
             failure_count=row["failure_count"],
+            avg_rating=row["avg_rating"],
+            rating_count=row["rating_count"] or 0,
         )
 
     log.info("Analytics snapshots computed for %s", yesterday)

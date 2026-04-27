@@ -824,6 +824,8 @@ async def insert_analytics_snapshot(
     cancelled_count: int,
     unique_users: int,
     failure_count: int,
+    avg_rating: float | None = None,
+    rating_count: int = 0,
 ) -> None:
     """Insert a single analytics snapshot row."""
     db = await get_db()
@@ -832,12 +834,14 @@ async def insert_analytics_snapshot(
         INSERT INTO analytics_snapshots
             (date, machine_id, total_jobs, completed_jobs, avg_wait_mins,
              avg_serve_mins, peak_hour, ai_summary, no_show_count,
-             cancelled_count, unique_users, failure_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             cancelled_count, unique_users, failure_count,
+             avg_rating, rating_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (date, machine_id, total_jobs, completed_jobs, avg_wait_mins,
          avg_serve_mins, peak_hour, ai_summary, no_show_count,
-         cancelled_count, unique_users, failure_count),
+         cancelled_count, unique_users, failure_count,
+         avg_rating, rating_count),
     )
     await db.commit()
 

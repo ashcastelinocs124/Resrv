@@ -5,6 +5,7 @@ import type {
   ChatModelsResponse,
   ChatPostRequest,
   ChatPostResponse,
+  CollegeSummary,
   Machine,
   MachineQueue,
   QueueEntry,
@@ -99,6 +100,10 @@ export const completeEntry = (
 
 export const bumpEntry = (entryId: number) =>
   request<QueueEntry>(`/queue/${entryId}/bump`, { method: "POST" });
+
+// -- Colleges (public) --
+
+export const listColleges = () => request<CollegeSummary[]>("/colleges/");
 
 // -- Health --
 

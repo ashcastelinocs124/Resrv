@@ -1,4 +1,5 @@
 import { request } from "./client";
+import type { AdminCollege } from "./types";
 
 export type AdminUnit = {
   id: number;
@@ -152,3 +153,32 @@ export const getPublicSettings = () =>
   request<{ public_mode: string; maintenance_banner: string }>(
     `/public-settings/`
   );
+
+// ── Colleges ──
+
+export const listAllColleges = () =>
+  request<AdminCollege[]>(`/colleges/?include_archived=true`);
+
+export const createCollege = (name: string) =>
+  request<AdminCollege>(`/colleges/`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+
+export const patchCollege = (id: number, name: string) =>
+  request<AdminCollege>(`/colleges/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+
+export const archiveCollege = (id: number) =>
+  request<{ status: string }>(`/colleges/${id}`, { method: "DELETE" });
+
+export const restoreCollege = (id: number) =>
+  request<AdminCollege>(`/colleges/${id}/restore`, { method: "POST" });
+
+export const purgeCollege = (id: number, confirm_name: string) =>
+  request<{ status: string }>(`/colleges/${id}?purge=true`, {
+    method: "DELETE",
+    body: JSON.stringify({ confirm_name }),
+  });

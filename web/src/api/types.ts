@@ -147,3 +147,16 @@ export interface ChatPostResponse {
   conversation_id: number;
   message: ChatMessage;
 }
+
+// ── Colleges ────────────────────────────────────────────────────────────
+
+export interface CollegeSummary {
+  id: number;
+  name: string;
+}
+
+export interface AdminCollege {
+  id: number;
+  name: string;
+  archived_at: string | null;
+}

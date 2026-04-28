@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
-import type { AnalyticsPeriod, CollegeSummary } from "../api/types";
-import { exportAnalytics, listColleges } from "../api/client";
+import type {
+  AnalyticsPeriod,
+  CollegeSummary,
+  FeatureFlags,
+} from "../api/types";
+import { exportAnalytics, fetchFeatures, listColleges } from "../api/client";
 import { useAnalytics } from "../hooks/useAnalytics";
 import { SummaryCards } from "../components/analytics/SummaryCards";
 import { AISummary } from "../components/analytics/AISummary";
@@ -10,6 +14,7 @@ import { CollegeUtilization } from "../components/analytics/CollegeUtilization";
 import { PeakHours } from "../components/analytics/PeakHours";
 import { MachineTable } from "../components/analytics/MachineTable";
 import { AnalyticsChat } from "../components/analytics/AnalyticsChat";
+import { AnalystAgent } from "../components/analytics/AnalystAgent";
 import { CustomCharts } from "../components/analytics/CustomCharts";
 
 const periods: { label: string; value: AnalyticsPeriod }[] = [
@@ -24,6 +29,7 @@ export function Analytics() {
     null,
   );
   const [colleges, setColleges] = useState<CollegeSummary[]>([]);
+  const [features, setFeatures] = useState<FeatureFlags | null>(null);
   const { data, error, loading, refresh } = useAnalytics(
     period,
     selectedCollegeId,
@@ -33,6 +39,9 @@ export function Analytics() {
     listColleges()
       .then(setColleges)
       .catch(() => setColleges([]));
+    fetchFeatures()
+      .then(setFeatures)
+      .catch(() => setFeatures(null));
   }, []);
 
   const selectedCollege = colleges.find((c) => c.id === selectedCollegeId);
@@ -171,6 +180,7 @@ export function Analytics() {
       )}
 
       <AnalyticsChat period={period} />
+      {features?.data_analyst_visible && <AnalystAgent />}
     </div>
   );
 }

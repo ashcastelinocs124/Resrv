@@ -1449,3 +1449,28 @@ async def delete_pinned_chart(chart_id: int) -> bool:
     )
     await db.commit()
     return cursor.rowcount > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Staff onboarding
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def mark_staff_onboarded(staff_user_id: int) -> None:
+    """Stamp ``onboarded_at`` on first call; subsequent calls are no-ops."""
+    db = await get_db()
+    await db.execute(
+        "UPDATE staff_users SET onboarded_at = datetime('now') "
+        "WHERE id = ? AND onboarded_at IS NULL",
+        (staff_user_id,),
+    )
+    await db.commit()
+
+
+async def get_staff_onboarded_at(staff_user_id: int) -> str | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT onboarded_at FROM staff_users WHERE id = ?", (staff_user_id,)
+    )
+    row = await cursor.fetchone()
+    return row["onboarded_at"] if row else None

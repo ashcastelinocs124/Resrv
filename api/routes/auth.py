@@ -11,6 +11,7 @@ from api.auth import (
     require_staff,
     verify_password,
 )
+from db import models
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -30,6 +31,7 @@ class MeResponse(BaseModel):
     username: str
     staff_id: int
     role: str
+    onboarded_at: str | None = None
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -54,8 +56,10 @@ async def logout(_: dict = Depends(require_staff)) -> dict[str, str]:
 
 @router.get("/me", response_model=MeResponse)
 async def me(payload: dict = Depends(require_staff)) -> MeResponse:
+    onboarded_at = await models.get_staff_onboarded_at(payload["sub"])
     return MeResponse(
         username=payload["usr"],
         staff_id=payload["sub"],
         role=payload.get("rol", "staff"),
+        onboarded_at=onboarded_at,
     )

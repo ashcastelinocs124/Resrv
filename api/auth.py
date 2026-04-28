@@ -128,6 +128,33 @@ async def require_admin(
     return payload
 
 
+async def require_data_analyst(
+    payload: dict[str, Any] = Depends(require_staff),
+) -> dict[str, Any]:
+    """Gate for /api/analytics/agent/*.
+
+    503 when the master flag is off; 403 when staff visibility is off and the
+    caller isn't an admin; otherwise returns the JWT payload unchanged.
+    """
+    from api.settings_store import get_setting_bool
+
+    if not await get_setting_bool("data_analyst_enabled", default=False):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Data-analyst agent not enabled",
+        )
+    if payload.get("rol") == "admin":
+        return payload
+    if not await get_setting_bool(
+        "data_analyst_visible_to_staff", default=False
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not available to staff",
+        )
+    return payload
+
+
 # ── Staff user helpers ───────────────────────────────────────────────────
 
 async def get_staff_by_username(username: str) -> dict[str, Any] | None:

@@ -15,6 +15,9 @@ const LABELS: Record<string, string> = {
   agent_tick_seconds: "Agent tick interval (seconds)",
   public_mode: "Public mode (skip Illinois email check)",
   maintenance_banner: "Maintenance banner",
+  data_analyst_enabled: "Enable data-analyst agent",
+  data_analyst_visible_to_staff:
+    "Visible to staff (uncheck = admin-only)",
 };
 
 export function AdminSettings() {
@@ -123,6 +126,56 @@ export function AdminSettings() {
               placeholder="Shown to all users when non-empty (e.g. “Planned maintenance 5–6pm”)"
               className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2"
             />
+          </label>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+        <h3 className="text-sm font-semibold uppercase text-gray-500">
+          Data analyst agent
+        </h3>
+        <p className="mt-1 text-xs text-gray-500">
+          Floating chart-builder. Pinned charts persist on the analytics page.
+        </p>
+        <div className="mt-4 space-y-3">
+          <label className="flex items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={values.data_analyst_enabled === "true"}
+              onChange={(e) =>
+                update(
+                  "data_analyst_enabled",
+                  e.target.checked ? "true" : "false",
+                )
+              }
+              className="h-4 w-4"
+            />
+            <span className="font-medium text-gray-700">
+              {LABELS.data_analyst_enabled}
+            </span>
+          </label>
+          <label className="flex items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={values.data_analyst_visible_to_staff === "true"}
+              disabled={values.data_analyst_enabled !== "true"}
+              onChange={(e) =>
+                update(
+                  "data_analyst_visible_to_staff",
+                  e.target.checked ? "true" : "false",
+                )
+              }
+              className="h-4 w-4 disabled:opacity-40"
+            />
+            <span
+              className={`font-medium ${
+                values.data_analyst_enabled === "true"
+                  ? "text-gray-700"
+                  : "text-gray-400"
+              }`}
+            >
+              {LABELS.data_analyst_visible_to_staff}
+            </span>
           </label>
         </div>
       </section>

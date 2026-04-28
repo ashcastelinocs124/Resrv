@@ -606,3 +606,41 @@ async def test_analytics_snapshots_has_rating_columns(db):
     assert "avg_rating" in cols
     assert "rating_count" in cols
 
+
+# ── Agent + pinned charts schema ────────────────────────────────────────
+
+
+async def test_agent_tables_exist(db):
+    conn = await models.get_db()
+    cursor = await conn.execute("PRAGMA table_info(agent_conversations)")
+    cols = {row[1] for row in await cursor.fetchall()}
+    assert {"id", "staff_user_id", "title", "created_at", "updated_at"} <= cols
+    cursor = await conn.execute("PRAGMA table_info(agent_messages)")
+    cols = {row[1] for row in await cursor.fetchall()}
+    assert {"id", "conversation_id", "role", "content",
+             "tool_call_id", "tool_calls_json", "chart_spec_json",
+             "created_at"} <= cols
+
+
+async def test_pinned_charts_table_exists(db):
+    conn = await models.get_db()
+    cursor = await conn.execute("PRAGMA table_info(pinned_charts)")
+    cols = {row[1] for row in await cursor.fetchall()}
+    assert {"id", "chart_spec_json", "title", "created_by",
+             "pin_order", "created_at"} <= cols
+
+
+async def test_staff_users_has_onboarded_at(db):
+    conn = await models.get_db()
+    cursor = await conn.execute("PRAGMA table_info(staff_users)")
+    cols = {row[1] for row in await cursor.fetchall()}
+    assert "onboarded_at" in cols
+
+
+async def test_data_analyst_settings_seeded(db):
+    from api import settings_store
+    val = await settings_store.get_setting("data_analyst_enabled")
+    assert val == "false"
+    val = await settings_store.get_setting("data_analyst_visible_to_staff")
+    assert val == "false"
+

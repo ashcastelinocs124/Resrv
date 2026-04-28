@@ -104,7 +104,8 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             username      TEXT    UNIQUE NOT NULL,
             password_hash TEXT    NOT NULL,
             role          TEXT    NOT NULL DEFAULT 'staff',
-            created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            onboarded_at  TEXT
         );
 
         CREATE TABLE IF NOT EXISTS analytics_snapshots (
@@ -152,6 +153,34 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             rating          INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
             comment         TEXT,
             created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_conversations (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_user_id INTEGER NOT NULL REFERENCES staff_users(id),
+            title         TEXT NOT NULL DEFAULT 'New analysis',
+            created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_messages (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL REFERENCES agent_conversations(id) ON DELETE CASCADE,
+            role            TEXT NOT NULL CHECK (role IN ('user','assistant','tool','system')),
+            content         TEXT NOT NULL,
+            tool_call_id    TEXT,
+            tool_calls_json TEXT,
+            chart_spec_json TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS pinned_charts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            chart_spec_json TEXT NOT NULL,
+            title           TEXT NOT NULL,
+            created_by      INTEGER NOT NULL REFERENCES staff_users(id),
+            pin_order       INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_queue_status
@@ -368,6 +397,65 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         "ON chat_messages(conversation_id, id)"
     )
 
+    # Agent tables — additive on upgrade.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_conversations (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_user_id INTEGER NOT NULL REFERENCES staff_users(id),
+            title         TEXT NOT NULL DEFAULT 'New analysis',
+            created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_messages (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL REFERENCES agent_conversations(id) ON DELETE CASCADE,
+            role            TEXT NOT NULL CHECK (role IN ('user','assistant','tool','system')),
+            content         TEXT NOT NULL,
+            tool_call_id    TEXT,
+            tool_calls_json TEXT,
+            chart_spec_json TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_msgs_conv "
+        "ON agent_messages(conversation_id, id)"
+    )
+
+    # Pinned charts.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pinned_charts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            chart_spec_json TEXT NOT NULL,
+            title           TEXT NOT NULL,
+            created_by      INTEGER NOT NULL REFERENCES staff_users(id),
+            pin_order       INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_pinned_charts_order "
+        "ON pinned_charts(pin_order, id)"
+    )
+
+    # staff_users.onboarded_at — backfill existing rows so they don't see the tour.
+    cursor = await db.execute("PRAGMA table_info(staff_users)")
+    staff_cols_v4 = {row[1] for row in await cursor.fetchall()}
+    if "onboarded_at" not in staff_cols_v4:
+        await db.execute("ALTER TABLE staff_users ADD COLUMN onboarded_at TEXT")
+        await db.execute(
+            "UPDATE staff_users SET onboarded_at = datetime('now') "
+            "WHERE onboarded_at IS NULL"
+        )
+
 
 async def _backfill_main_units(db: aiosqlite.Connection) -> None:
     """Ensure every non-archived machine has at least one active unit.
@@ -417,6 +505,8 @@ async def _seed_settings(db: aiosqlite.Connection) -> None:
         "agent_tick_seconds": str(settings.agent_tick_seconds),
         "public_mode":        "false",
         "maintenance_banner": "",
+        "data_analyst_enabled":          "false",
+        "data_analyst_visible_to_staff": "false",
     }
     for key, value in defaults.items():
         await db.execute(

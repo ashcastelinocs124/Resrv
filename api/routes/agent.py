@@ -436,7 +436,7 @@ async def _run_tool_loop(
             messages=openai_messages,
             tools=_tool_schemas(),
             tool_choice="auto",
-            max_tokens=800,
+            max_completion_tokens=800,
             temperature=0.2,
         )
         msg = response.choices[0].message
@@ -522,7 +522,7 @@ async def _run_tool_loop(
                 }],
                 tools=_tool_schemas(),
                 tool_choice="none",
-                max_tokens=400,
+                max_completion_tokens=400,
                 temperature=0.2,
             )
             final_content = (

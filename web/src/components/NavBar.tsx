@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { useAuth } from "../auth/AuthContext";
+import { runTour } from "../onboarding/runTour";
 
 export function NavBar() {
   const { pathname } = useLocation();
@@ -59,6 +60,13 @@ export function NavBar() {
                   {username}
                   <span className="ml-1 text-xs text-gray-400">({role})</span>
                 </span>
+                <button
+                  onClick={() => runTour(navigate, isAdmin)}
+                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  title="Replay the onboarding tour"
+                >
+                  Replay tour
+                </button>
                 <button
                   onClick={() => {
                     logout();

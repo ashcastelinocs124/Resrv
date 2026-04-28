@@ -1,7 +1,16 @@
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { useEffect } from "react";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import { NavBar } from "./components/NavBar";
 import { MaintenanceBanner } from "./components/MaintenanceBanner";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
+import { runTour } from "./onboarding/runTour";
 import { Dashboard } from "./pages/Dashboard";
 import { Analytics } from "./pages/Analytics";
 import { Login } from "./pages/Login";
@@ -10,6 +19,32 @@ import { AdminStaff } from "./pages/admin/Staff";
 import { AdminSettings } from "./pages/admin/Settings";
 import { AdminColleges } from "./pages/admin/Colleges";
 import { AdminFeedback } from "./pages/admin/Feedback";
+
+function OnboardingGate() {
+  const { username, role, onboardedAt, loading, markOnboardedLocal } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (loading || !username || onboardedAt) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await runTour(navigate, role === "admin");
+        if (!cancelled) await markOnboardedLocal();
+      } catch {
+        /* swallow tour errors — don't block the app */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // markOnboardedLocal is stable enough; intentionally omitted from deps to
+    // avoid re-running the tour when the function reference changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, username, onboardedAt, role]);
+
+  return null;
+}
 
 function RequireStaff({ children }: { children: React.ReactElement }) {
   const { username, loading } = useAuth();
@@ -45,6 +80,7 @@ export default function App() {
         <div className="min-h-screen bg-gray-100">
           <MaintenanceBanner />
           <NavBar />
+          <OnboardingGate />
           <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
             <Routes>
               <Route path="/" element={<Dashboard />} />

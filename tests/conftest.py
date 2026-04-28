@@ -13,6 +13,10 @@ from config import settings
 def _use_in_memory_db(monkeypatch: pytest.MonkeyPatch) -> None:
     """Force all tests to use ':memory:' instead of a real file."""
     monkeypatch.setattr(settings, "database_path", ":memory:")
+    # Settings cache is module-level; in-memory DB resets per test, so the
+    # cache must reset too or earlier-test writes leak through as stale reads.
+    from api import settings_store
+    settings_store.invalidate_settings_cache()
 
 
 @pytest.fixture

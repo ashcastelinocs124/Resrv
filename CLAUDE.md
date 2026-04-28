@@ -80,6 +80,13 @@ Update `memory.md` whenever something significant changes. Read it at the start 
 - New `/admin/feedback` page lists recent ratings with full attribution (`full_name`, college, machine), filterable by machine / college / rating. Staff-readable, no admin write surface.
 - Conventions: `FeedbackAlreadyExistsError` (modal-side ephemeral), `★ x.x (n)` accents on machine/college analytics cards, daily snapshot now includes feedback aggregates, `send_rating_dm` only fires on user-acknowledged completions.
 
+### 2026-04-27 — Self-Service Staff Tooling
+- Separate data-analyst agent (`/api/analytics/agent`) with OpenAI tool-calling: 6 tools (`query_jobs`, `query_feedback`, `query_funnel`, `top_n`, `compare_periods`, `make_chart`), 4 round-trip cap (forced fallback with `tool_choice="none"`), 1000-row tool cap, SSE protocol extended with `tool_call` + `chart` events. Gated by `data_analyst_enabled` + `data_analyst_visible_to_staff` settings; `require_data_analyst` dependency returns 503/403/pass.
+- New "Custom charts" section on `/admin/analytics` renders pinned charts (`/api/pinned-charts` CRUD + refresh re-runs the saved `query_jobs` context, unpin removes). `<ChartFromSpec>` dispatches bar/line/pie/table to Recharts.
+- First-login guided tour using `driver.js` (11 steps with `requiresAdmin` skip-list). `staff_users.onboarded_at` gates auto-run via `<OnboardingGate>`; "Replay tour" in NavBar re-runs without re-stamping.
+- New tables: `agent_conversations`, `agent_messages`, `pinned_charts`. New endpoint groups: `/api/me/features`, `/api/auth/me/onboarded`, `/api/analytics/agent/*`, `/api/pinned-charts/*`. Admin Settings page gains the two flags.
+- Conventions: settings cache (`api/settings_store._cache`) is module-level — `tests/conftest.py` now invalidates it per test. Inner OpenAI calls in the agent loop are non-streaming; SSE frames *loop progress* (meta → tool_call* → chart? → delta → done).
+
 ### 2026-04-22 — Multi-Unit Machines
 - New `machine_units` table; every existing machine backfilled with one "Main" unit. `queue_entries.unit_id` stamped on promotion.
 - Agent now promotes up to `count_active_units(machine)` in parallel; auto-assigns the first active unit without a live serving entry. Maintenance units exclude themselves from capacity.

@@ -1312,3 +1312,140 @@ async def feedback_aggregates_by_college(
         for row in rows
     }
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data-analyst agent helpers (mirror chat_* helpers)
+# ─────────────────────────────────────────────────────────────────────────────
+
+import json as _json
+
+
+async def create_agent_conversation(*, staff_user_id: int, title: str) -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        "INSERT INTO agent_conversations (staff_user_id, title) "
+        "VALUES (?, ?) RETURNING *",
+        (staff_user_id, title),
+    )
+    row = await cursor.fetchone()
+    await db.commit()
+    return dict(row)
+
+
+async def get_agent_conversation(conversation_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM agent_conversations WHERE id = ?", (conversation_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def list_agent_conversations(staff_user_id: int) -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM agent_conversations WHERE staff_user_id = ? "
+        "ORDER BY updated_at DESC",
+        (staff_user_id,),
+    )
+    return [dict(r) for r in await cursor.fetchall()]
+
+
+async def append_agent_message(
+    *, conversation_id: int, role: str, content: str,
+    tool_call_id: str | None = None,
+    tool_calls_json: str | None = None,
+    chart_spec_json: str | None = None,
+) -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        """
+        INSERT INTO agent_messages
+            (conversation_id, role, content, tool_call_id,
+             tool_calls_json, chart_spec_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        RETURNING *
+        """,
+        (conversation_id, role, content, tool_call_id,
+         tool_calls_json, chart_spec_json),
+    )
+    row = await cursor.fetchone()
+    await db.execute(
+        "UPDATE agent_conversations SET updated_at = datetime('now') "
+        "WHERE id = ?",
+        (conversation_id,),
+    )
+    await db.commit()
+    return dict(row)
+
+
+async def get_agent_messages(conversation_id: int) -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM agent_messages WHERE conversation_id = ? "
+        "ORDER BY id ASC",
+        (conversation_id,),
+    )
+    return [dict(r) for r in await cursor.fetchall()]
+
+
+async def delete_agent_conversation(conversation_id: int) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM agent_conversations WHERE id = ?", (conversation_id,)
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pinned charts helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def create_pinned_chart(
+    *, chart_spec: dict, title: str, created_by: int,
+) -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT COALESCE(MAX(pin_order), 0) + 1 FROM pinned_charts"
+    )
+    next_order = (await cursor.fetchone())[0]
+    cursor = await db.execute(
+        """
+        INSERT INTO pinned_charts (chart_spec_json, title, created_by, pin_order)
+        VALUES (?, ?, ?, ?)
+        RETURNING *
+        """,
+        (_json.dumps(chart_spec), title, created_by, next_order),
+    )
+    row = await cursor.fetchone()
+    await db.commit()
+    return dict(row)
+
+
+async def list_pinned_charts() -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM pinned_charts ORDER BY pin_order ASC, id ASC"
+    )
+    return [dict(r) for r in await cursor.fetchall()]
+
+
+async def get_pinned_chart(chart_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM pinned_charts WHERE id = ?", (chart_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def delete_pinned_chart(chart_id: int) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM pinned_charts WHERE id = ?", (chart_id,)
+    )
+    await db.commit()
+    return cursor.rowcount > 0

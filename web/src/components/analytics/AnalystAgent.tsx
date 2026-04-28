@@ -207,6 +207,7 @@ export function AnalystAgent() {
       await pinChart(spec, title);
       setPinningId(null);
       setPinTitle("");
+      window.dispatchEvent(new CustomEvent("reserv:pinned-charts-changed"));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -217,7 +218,7 @@ export function AnalystAgent() {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-6 left-6 z-40 rounded-full bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-violet-700"
+          className="fixed bottom-24 right-6 z-40 rounded-full bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-violet-700"
         >
           📊 Build a chart
         </button>
@@ -225,7 +226,7 @@ export function AnalystAgent() {
 
       {open && (
         <div
-          className="fixed bottom-6 left-6 z-40 flex h-[80vh] max-h-[820px] w-[min(560px,calc(100vw-3rem))] flex-col rounded-2xl border border-gray-200 bg-white shadow-2xl"
+          className="fixed bottom-6 right-6 z-40 flex h-[80vh] max-h-[820px] w-[min(560px,calc(100vw-3rem))] flex-col rounded-2xl border border-gray-200 bg-white shadow-2xl"
           onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
         >
           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">

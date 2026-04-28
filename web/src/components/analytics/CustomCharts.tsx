@@ -19,6 +19,10 @@ export function CustomCharts() {
 
   useEffect(() => {
     reload();
+    const onChange = () => reload();
+    window.addEventListener("reserv:pinned-charts-changed", onChange);
+    return () =>
+      window.removeEventListener("reserv:pinned-charts-changed", onChange);
   }, [reload]);
 
   if (charts.length === 0) return null;

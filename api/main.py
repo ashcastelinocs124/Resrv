@@ -24,6 +24,7 @@ from api.routes.units import router as units_router
 from api.routes.chat import router as chat_router
 from api.routes.me import router as me_router
 from api.routes.agent import router as agent_router
+from api.routes.pinned_charts import router as pinned_charts_router
 
 app = FastAPI(title="Reserv API")
 
@@ -52,6 +53,7 @@ app.include_router(units_router)
 app.include_router(chat_router)
 app.include_router(me_router)
 app.include_router(agent_router)
+app.include_router(pinned_charts_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────

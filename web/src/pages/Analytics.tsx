@@ -10,6 +10,7 @@ import { CollegeUtilization } from "../components/analytics/CollegeUtilization";
 import { PeakHours } from "../components/analytics/PeakHours";
 import { MachineTable } from "../components/analytics/MachineTable";
 import { AnalyticsChat } from "../components/analytics/AnalyticsChat";
+import { CustomCharts } from "../components/analytics/CustomCharts";
 
 const periods: { label: string; value: AnalyticsPeriod }[] = [
   { label: "Day", value: "day" },
@@ -165,6 +166,7 @@ export function Analytics() {
           </div>
 
           <MachineTable machines={data.machines} />
+          <CustomCharts />
         </>
       )}
 

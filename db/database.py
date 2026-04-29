@@ -462,6 +462,12 @@ async def _migrate(db: aiosqlite.Connection) -> None:
             "WHERE onboarded_at IS NULL"
         )
 
+    # users.verified_at — audit timestamp set when a verification code is accepted.
+    cursor = await db.execute("PRAGMA table_info(users)")
+    user_cols_v3 = {row[1] for row in await cursor.fetchall()}
+    if "verified_at" not in user_cols_v3:
+        await db.execute("ALTER TABLE users ADD COLUMN verified_at TEXT")
+
 
 async def _backfill_main_units(db: aiosqlite.Connection) -> None:
     """Ensure every non-archived machine has at least one active unit.

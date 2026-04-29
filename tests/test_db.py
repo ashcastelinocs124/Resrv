@@ -644,3 +644,10 @@ async def test_data_analyst_settings_seeded(db):
     val = await settings_store.get_setting("data_analyst_visible_to_staff")
     assert val == "false"
 
+
+async def test_users_has_verified_at(db):
+    conn = await models.get_db()
+    cursor = await conn.execute("PRAGMA table_info(users)")
+    cols = {row[1] for row in await cursor.fetchall()}
+    assert "verified_at" in cols
+

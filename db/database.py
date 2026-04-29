@@ -468,6 +468,16 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     if "verified_at" not in user_cols_v3:
         await db.execute("ALTER TABLE users ADD COLUMN verified_at TEXT")
 
+    # verification_codes.attempts — counts wrong-code attempts; the row is
+    # invalidated (used=1) once attempts reaches MAX_WRONG_ATTEMPTS.
+    cursor = await db.execute("PRAGMA table_info(verification_codes)")
+    vc_cols = {row[1] for row in await cursor.fetchall()}
+    if "attempts" not in vc_cols:
+        await db.execute(
+            "ALTER TABLE verification_codes "
+            "ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
+        )
+
 
 async def _backfill_main_units(db: aiosqlite.Connection) -> None:
     """Ensure every non-archived machine has at least one active unit.

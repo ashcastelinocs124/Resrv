@@ -63,9 +63,15 @@ async def test_select_callback_opens_modal_with_college_id(
 async def test_modal_submit_calls_register_user_with_college_id(
     db, fake_bot, fake_interaction
 ):
+    # public_mode=true skips the email-verification gate so the modal
+    # synchronously registers + joins (the path this test cares about).
+    from api.settings_store import set_setting
+    await set_setting("public_mode", "true")
+
     college = await models.create_college("Submit College")
     machine = await models.create_machine(name="Y", slug="y")
     user = await models.get_or_create_user(discord_id="556", discord_name="u")
+    fake_interaction.user.id = 556
 
     modal = SignupModal(
         bot=fake_bot, user_id=user["id"], machine_id=machine["id"],

@@ -261,8 +261,9 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
 
         try:
             await interaction.user.send(
-                f"You're **#{position}** in the queue for **{machine['name']}**. "
-                f"I'll DM you when it's your turn!"
+                f"You're in the queue for **{machine['name']}**. "
+                f"I'll DM you when it's your turn — tap **Check Position** on the "
+                f"queue card any time to see your live spot."
             )
         except discord.Forbidden:
             pass
@@ -386,11 +387,13 @@ class QueueCog(commands.Cog):
         # Update the pinned embed
         await self.bot.update_queue_embeds(machine_id)
 
-        # DM confirmation
+        # DM confirmation — no live position here, since DMs don't update.
+        # Users can tap "Check Position" on the channel embed for the live rank.
         try:
             await interaction.user.send(
-                f"You're **#{position}** in the queue for **{machine['name']}**. "
-                f"I'll DM you when it's your turn!"
+                f"You're in the queue for **{machine['name']}**. "
+                f"I'll DM you when it's your turn — tap **Check Position** on the "
+                f"queue card any time to see your live spot."
             )
         except discord.Forbidden:
             log.warning(

@@ -80,6 +80,13 @@ Update `memory.md` whenever something significant changes. Read it at the start 
 - New `/admin/feedback` page lists recent ratings with full attribution (`full_name`, college, machine), filterable by machine / college / rating. Staff-readable, no admin write surface.
 - Conventions: `FeedbackAlreadyExistsError` (modal-side ephemeral), `★ x.x (n)` accents on machine/college analytics cards, daily snapshot now includes feedback aggregates, `send_rating_dm` only fires on user-acknowledged completions.
 
+### 2026-04-29 — Illinois Email Verification
+- Strict SMTP-backed (Gmail-default) verification gate: 6-digit code over `aiosmtplib` STARTTLS:587, entered via Discord `VerificationModal` after `SignupModal`. `users.verified=1` is sticky — verified users skip the gate on every future join. `public_mode=true` is the admin escape hatch.
+- New service module `bot/email_verification.py` with lazy SMTP factory (graceful degrade when creds missing — same pattern as the OpenAI client). `issue_code` invalidates prior unused codes per `discord_id`; `verify_code` locks the row after `MAX_WRONG_ATTEMPTS=5` wrong submissions; `VerificationRateLimitError` after 5 codes/hour.
+- Schema: `users.verified_at TEXT NULL`, `verification_codes.attempts INTEGER NOT NULL DEFAULT 0` — both additive in `_migrate`. Reused the previously-dormant `verification_codes` table.
+- Convention: `register_user` is **deferred** to `VerificationModal.on_submit` on the unverified path so abandoned signups don't leave registered ghost rows. `_join_and_dm` extracted as a module-level helper to share the live-rank join + DM logic across SignupModal (fast path), VerificationModal, and `_handle_join`.
+- 10 new tests (1 schema + 7 service + 3 flow); full suite at 305 PASS, `npx tsc -b` clean (no frontend changes).
+
 ### 2026-04-27 — Self-Service Staff Tooling
 - Separate data-analyst agent (`/api/analytics/agent`) with OpenAI tool-calling: 6 tools (`query_jobs`, `query_feedback`, `query_funnel`, `top_n`, `compare_periods`, `make_chart`), 4 round-trip cap (forced fallback with `tool_choice="none"`), 1000-row tool cap, SSE protocol extended with `tool_call` + `chart` events. Gated by `data_analyst_enabled` + `data_analyst_visible_to_staff` settings; `require_data_analyst` dependency returns 503/403/pass.
 - New "Custom charts" section on `/admin/analytics` renders pinned charts (`/api/pinned-charts` CRUD + refresh re-runs the saved `query_jobs` context, unpin removes). `<ChartFromSpec>` dispatches bar/line/pie/table to Recharts.

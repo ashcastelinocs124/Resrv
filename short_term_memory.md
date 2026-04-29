@@ -1,5 +1,90 @@
 # Short-term Memory
 
+## 2026-04-29 — Illinois Email Verification
+Shipped on `feat/customizable-admin`. 305 tests passing.
+
+**Schema:**
+- `users.verified_at TEXT NULL` (commit `60e0b6c`) — stamped by
+  `mark_user_verified` when a code is accepted.
+- `verification_codes.attempts INTEGER NOT NULL DEFAULT 0` (commit
+  `baa8e0b`) — count of wrong-code submissions; the row is invalidated
+  (`used=1`) once it hits `MAX_WRONG_ATTEMPTS = 5`.
+
+**Config (commit `d4fc3d1`):**
+- `smtp_host="smtp.gmail.com"`, `smtp_port=587`, `smtp_username`,
+  `smtp_password`, `smtp_from`, `verification_code_ttl_minutes=10`,
+  `verification_max_codes_per_hour=5`. Gmail-default but the host/port
+  are env-overridable, so UIUC SMTP / SES / Mailtrap work without code
+  changes.
+
+**Service module — `bot/email_verification.py` (commit `baa8e0b`):**
+- `_smtp_configured()` — guard so missing creds raise `EmailSendError`
+  instead of crashing on import. Mirrors the OpenAI lazy-factory pattern.
+- `issue_code(discord_id, email) -> str` — generates 6 digits via
+  `secrets.randbelow(1_000_000)`, marks all prior unused codes for the
+  same `discord_id` as `used=1` (so only the latest works), enforces
+  per-hour rate limit via `VerificationRateLimitError`.
+- `send_verification_email(to_email, code)` — `aiosmtplib.send` over
+  STARTTLS:587. Plain-text body with the 6 digits + 10-min TTL note.
+- `verify_code(discord_id, code) -> tuple[bool, str | None]` — accepts
+  the latest unused, unexpired row; on miss bumps `attempts` and locks
+  the row at 5; returns `(True, email)` on success and immediately
+  flips `used=1`.
+- `mark_user_verified(user_id, email)` — `UPDATE users SET verified=1,
+  email=?, verified_at=datetime('now')`.
+
+**Cog flow change — `bot/cogs/queue.py` (commit `29640dd`):**
+- New module-level helper `_join_and_dm(interaction, bot, user_id,
+  machine_id, machine_name, confirmation_prefix)` — pulls the duplicated
+  join + ephemeral confirmation + DM-with-live-rank logic out of
+  `SignupModal.on_submit` and `_handle_join` so the new
+  `VerificationModal.on_submit` reuses it.
+- New `VerificationModal` (single 6-digit `TextInput`, `min_length=6`,
+  `max_length=6`). On submit: `verify_code` → `mark_user_verified` →
+  `register_user` (the deferred path) → `_join_and_dm`. Wrong code
+  shows an ephemeral retry message; the modal closes and the user
+  clicks Join Queue again to request a fresh code.
+- `SignupModal.on_submit` now branches on:
+  - `public_mode == "true"` → fast path (no email; preserves existing
+    behaviour for events).
+  - existing user with `verified=1` AND matching email → fast path
+    (verification is sticky).
+  - else → `issue_code` + `send_verification_email`, then
+    `interaction.response.send_modal(VerificationModal(...))`. If the
+    rate limit is hit or SMTP is unavailable, an ephemeral message
+    explains and aborts.
+- `register_user` is **deferred** to the verification step on the
+  unverified path, so an abandoned signup never leaves a registered
+  ghost row.
+
+**Tests added (10 total):**
+- `tests/test_db.py::test_users_has_verified_at` (1).
+- `tests/test_email_verification.py` (7) — issue/verify/expire/lock/
+  rate-limit/mark-verified/SMTP-not-configured.
+- `tests/test_queue_signup_flow.py` (3) — sticky-verification contract,
+  public_mode bypass, code-issuance flow with mocked SMTP.
+- `tests/test_signup_flow.py::test_modal_submit_calls_register_user_with_college_id`
+  was updated to set `public_mode="true"` so it exercises the still-
+  synchronous fast path.
+
+**Conventions reinforced:**
+- Lazy SMTP factory matches `_make_openai_client()` — missing creds
+  degrade to a 503-style "service unavailable" instead of crashing.
+- Settings cache invalidation in `tests/conftest.py` (from 2026-04-27)
+  was load-bearing for the `public_mode` tests added here.
+- The `verification_codes` schema was already on disk from the very
+  first MVP — this work reused it, didn't redesign it.
+
+**Manual smoke checklist** (run with real Gmail App Password):
+- Set `smtp_username` + `smtp_password` (16-char App Password) + restart.
+- Click Join in Discord on a fresh account → SignupModal → submit →
+  email arrives within ~5s → VerificationModal opens.
+- Wrong code → ephemeral "Wrong or expired" → user clicks Join again
+  → new code emailed (rate-limit allows 5/hour).
+- Right code → user lands in queue with the live-rank DM.
+- Click Join again on same machine → "already in queue" (no email).
+- Set `public_mode=true` via admin Settings → new join skips email.
+
 ## 2026-04-27 — Self-Service Staff Tooling
 Shipped on `feat/customizable-admin`. 294 tests passing, `npx tsc -b` clean.
 

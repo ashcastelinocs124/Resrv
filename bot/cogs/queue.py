@@ -249,8 +249,18 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
             return
 
         entry = await models.join_queue(self._user_id, self._machine_id)
-        position = entry["position"]
-        waiting_count = await models.get_waiting_count(self._machine_id)
+        # Live rank — entry['position'] is MAX(position)+1 over today's rows
+        # including completed/cancelled, so it can over-count.
+        queue = await models.get_queue_for_machine(self._machine_id)
+        waiting = [e for e in queue if e["status"] == "waiting"]
+        position = next(
+            (
+                idx for idx, e in enumerate(waiting, start=1)
+                if e["id"] == entry["id"]
+            ),
+            len(waiting),
+        )
+        waiting_count = len(waiting)
 
         await interaction.response.send_message(
             f"Welcome! You're registered and joined the queue for **{machine['name']}**!\n"
@@ -260,11 +270,12 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
         await self._bot.update_queue_embeds(self._machine_id)
 
         try:
-            await interaction.user.send(
-                f"You're in the queue for **{machine['name']}**. "
-                f"I'll DM you when it's your turn — tap **Check Position** on the "
-                f"queue card any time to see your live spot."
+            msg = await interaction.user.send(
+                f"You're **#{position}** in the queue for **{machine['name']}**. "
+                f"I'll edit this message as the queue moves and DM you again when "
+                f"it's your turn."
             )
+            await models.set_join_dm_message_id(entry["id"], msg.id)
         except discord.Forbidden:
             pass
 
@@ -375,8 +386,18 @@ class QueueCog(commands.Cog):
 
         # Join the queue
         entry = await models.join_queue(user["id"], machine_id)
-        position = entry["position"]
-        waiting_count = await models.get_waiting_count(machine_id)
+        # Live rank — entry['position'] is MAX(position)+1 over today's rows
+        # including completed/cancelled, so it can over-count.
+        queue = await models.get_queue_for_machine(machine_id)
+        waiting = [e for e in queue if e["status"] == "waiting"]
+        position = next(
+            (
+                idx for idx, e in enumerate(waiting, start=1)
+                if e["id"] == entry["id"]
+            ),
+            len(waiting),
+        )
+        waiting_count = len(waiting)
 
         await interaction.response.send_message(
             f"You joined the queue for **{machine['name']}**!\n"
@@ -387,14 +408,15 @@ class QueueCog(commands.Cog):
         # Update the pinned embed
         await self.bot.update_queue_embeds(machine_id)
 
-        # DM confirmation — no live position here, since DMs don't update.
-        # Users can tap "Check Position" on the channel embed for the live rank.
+        # DM confirmation — capture the message id so the bot can edit it
+        # in place whenever the user's live rank changes.
         try:
-            await interaction.user.send(
-                f"You're in the queue for **{machine['name']}**. "
-                f"I'll DM you when it's your turn — tap **Check Position** on the "
-                f"queue card any time to see your live spot."
+            msg = await interaction.user.send(
+                f"You're **#{position}** in the queue for **{machine['name']}**. "
+                f"I'll edit this message as the queue moves and DM you again when "
+                f"it's your turn."
             )
+            await models.set_join_dm_message_id(entry["id"], msg.id)
         except discord.Forbidden:
             log.warning(
                 "Cannot DM user %s (%s) -- DMs disabled",

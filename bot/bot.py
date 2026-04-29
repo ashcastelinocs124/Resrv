@@ -286,3 +286,52 @@ class ReservBot(commands.Bot):
                 await models.update_machine_embed_message_id(mid, new_msg.id)
             except Exception:
                 log.exception("Failed to update embed for machine %d", mid)
+
+            # Edit each waiting user's join DM in place with their live rank.
+            await self._refresh_position_dms(mid, queue)
+
+    async def _refresh_position_dms(
+        self,
+        machine_id: int,
+        queue: list[dict],
+    ) -> None:
+        """Edit each waiting user's join-confirmation DM with their live rank.
+
+        Best-effort: skips entries with no stored DM message id, missing user,
+        or DM-disabled. The DM was sent from the user's DM channel, so we
+        fetch by discord_id and edit there.
+        """
+        machine = await models.get_machine(machine_id)
+        if machine is None:
+            return
+        machine_name = machine["name"]
+        waiting = [e for e in queue if e["status"] == "waiting"]
+        for idx, entry in enumerate(waiting, start=1):
+            msg_id = entry.get("join_dm_message_id")
+            discord_id = entry.get("discord_id")
+            if not msg_id or not discord_id:
+                continue
+            try:
+                user = self.get_user(int(discord_id)) or await self.fetch_user(
+                    int(discord_id)
+                )
+                dm = user.dm_channel or await user.create_dm()
+                msg = await dm.fetch_message(int(msg_id))
+                await msg.edit(
+                    content=(
+                        f"You're **#{idx}** in the queue for **{machine_name}**. "
+                        f"I'll edit this message as the queue moves and DM you "
+                        f"again when it's your turn."
+                    )
+                )
+            except (discord.NotFound, discord.Forbidden, ValueError):
+                # User deleted the DM, blocked the bot, or bad id — drop the
+                # tracking so we don't keep retrying.
+                try:
+                    await models.set_join_dm_message_id(entry["id"], 0)
+                except Exception:
+                    pass
+            except Exception:
+                log.exception(
+                    "Failed to refresh DM rank for entry %s", entry.get("id")
+                )

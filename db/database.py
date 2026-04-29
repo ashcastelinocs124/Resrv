@@ -234,6 +234,12 @@ async def _migrate(db: aiosqlite.Connection) -> None:
             "ALTER TABLE queue_entries "
             "ADD COLUMN unit_id INTEGER REFERENCES machine_units(id)"
         )
+    # Track the DM message we sent at join time so we can edit it in place
+    # whenever the user's live rank changes (DMs aren't auto-updated).
+    if "join_dm_message_id" not in qe_cols:
+        await db.execute(
+            "ALTER TABLE queue_entries ADD COLUMN join_dm_message_id TEXT"
+        )
 
     # Backfill: every non-archived machine with zero units gets a "Main" unit.
     # Runs here for upgrade paths (where existing machines predate units).

@@ -769,6 +769,17 @@ async def mark_reminded(entry_id: int) -> None:
     await db.commit()
 
 
+async def set_join_dm_message_id(entry_id: int, message_id: int) -> None:
+    """Stamp the Discord message ID of the join-confirmation DM so the bot
+    can later edit the same message with a live rank."""
+    db = await get_db()
+    await db.execute(
+        "UPDATE queue_entries SET join_dm_message_id = ? WHERE id = ?",
+        (str(message_id), entry_id),
+    )
+    await db.commit()
+
+
 async def reset_reminder(entry_id: int) -> None:
     """Reset the reminded flag so the timer restarts."""
     db = await get_db()

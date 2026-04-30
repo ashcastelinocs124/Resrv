@@ -85,6 +85,9 @@ class ReservBot(commands.Bot):
         # Post or refresh pinned queue embeds
         await self._post_queue_embeds()
 
+        # Lock the channel so the dashboard stays at the bottom permanently
+        await self._lock_queue_channel()
+
         # Start the autonomous queue agent
         start_agent(self)
         log.info("Queue agent started")
@@ -124,6 +127,38 @@ class ReservBot(commands.Bot):
     # ------------------------------------------------------------------ #
     # Embed management
     # ------------------------------------------------------------------ #
+
+    async def _lock_queue_channel(self) -> None:
+        """Deny @everyone send/react/thread perms on the queue channel.
+
+        Keeps the per-machine dashboard messages permanently at the bottom
+        of the channel — only the bot can post. Idempotent: Discord no-ops
+        if the overwrite already matches. Skipped when
+        ``settings.lock_queue_channel`` is False. Logs and continues if the
+        bot lacks Manage Channels.
+        """
+        if not settings.lock_queue_channel:
+            return
+
+        channel = self.get_channel(settings.queue_channel_id)
+        if channel is None or not isinstance(channel, discord.TextChannel):
+            return
+
+        try:
+            await channel.set_permissions(
+                channel.guild.default_role,
+                send_messages=False,
+                add_reactions=False,
+                send_messages_in_threads=False,
+            )
+            log.info("Locked queue channel %d (members can't post)", channel.id)
+        except discord.Forbidden:
+            log.warning(
+                "Cannot lock queue channel %d -- bot lacks Manage Channels",
+                channel.id,
+            )
+        except Exception:
+            log.exception("Failed to lock queue channel %d", channel.id)
 
     async def _build_units_view(self, machine_id: int) -> list[dict]:
         """Fetch units + map each to its current serving user's display name."""

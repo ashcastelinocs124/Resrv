@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     discord_guild_id: int = 0
     queue_channel_id: int = 0
     admin_channel_id: int = 0
+    lock_queue_channel: bool = True
 
     # OpenAI (for DM intent classification)
     openai_api_key: str = ""

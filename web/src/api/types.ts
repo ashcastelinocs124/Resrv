@@ -182,6 +182,85 @@ export interface ChatPostResponse {
   message: ChatMessage;
 }
 
+// ── Charts (pinned + agent) ─────────────────────────────────────────────
+
+export type ChartType = "bar" | "line" | "pie" | "table";
+
+export interface ChartSpec {
+  type: ChartType;
+  title: string;
+  x: { field: string; label?: string };
+  y: { field: string; label?: string };
+  data: Array<Record<string, string | number | null>>;
+  context?: {
+    filter?: Record<string, unknown>;
+    period?: string;
+    group_by?: string;
+    metric?: string;
+  };
+}
+
+export interface PinnedChart {
+  id: number;
+  title: string;
+  chart_spec: ChartSpec;
+  pin_order: number;
+  created_at: string;
+  created_by_username: string | null;
+}
+
+// ── Data-analyst agent (separate from chat) ─────────────────────────────
+
+export interface AgentMessage {
+  id: number;
+  role: "user" | "assistant" | "tool" | "system";
+  content: string;
+  chart_spec: ChartSpec | null;
+  created_at: string;
+}
+
+export interface AgentConversationSummary {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentConversationDetail {
+  id: number;
+  title: string;
+  messages: AgentMessage[];
+}
+
+export interface AgentPostRequest {
+  conversation_id?: number;
+  message: string;
+  model?: string;
+}
+
+export interface AgentPostResponse {
+  conversation_id: number;
+  message_id: number;
+  content: string;
+  chart_spec: ChartSpec | null;
+}
+
+export interface AgentModelOption {
+  id: string;
+  label: string;
+}
+
+export interface AgentModelsResponse {
+  default: string;
+  models: AgentModelOption[];
+}
+
+// ── Per-user feature flags ──────────────────────────────────────────────
+
+export interface FeatureFlags {
+  data_analyst_visible: boolean;
+}
+
 // ── Colleges ────────────────────────────────────────────────────────────
 
 export interface CollegeSummary {

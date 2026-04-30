@@ -19,6 +19,192 @@ log = logging.getLogger(__name__)
 _ILLINOIS_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@illinois\.edu$", re.IGNORECASE)
 
 
+async def _join_and_dm(
+    *,
+    interaction: discord.Interaction,
+    bot: "ReservBot",
+    user_id: int,
+    machine_id: int,
+    machine_name: str,
+    confirmation_prefix: str = "You joined the queue for",
+) -> None:
+    """Join the queue + send ephemeral + capture join-DM with live rank.
+
+    Centralises the post-join boilerplate that used to live in both
+    SignupModal.on_submit and _handle_join. Live rank is computed from the
+    waiting list (queue_entries.position is a join-time stamp and may
+    over-count rows from earlier today).
+    """
+    entry = await models.join_queue(user_id, machine_id)
+    queue = await models.get_queue_for_machine(machine_id)
+    waiting = [e for e in queue if e["status"] == "waiting"]
+    position = next(
+        (idx for idx, e in enumerate(waiting, start=1) if e["id"] == entry["id"]),
+        len(waiting),
+    )
+    waiting_count = len(waiting)
+
+    await interaction.response.send_message(
+        f"{confirmation_prefix} **{machine_name}**!\n"
+        f"Your position: **#{position}** ({waiting_count} waiting)",
+        ephemeral=True,
+    )
+    await bot.update_queue_embeds(machine_id)
+
+    try:
+        msg = await interaction.user.send(
+            f"You're **#{position}** in the queue for **{machine_name}**. "
+            f"I'll edit this message as the queue moves and DM you again when "
+            f"it's your turn."
+        )
+        await models.set_join_dm_message_id(entry["id"], msg.id)
+    except discord.Forbidden:
+        pass
+
+
+class VerificationModal(discord.ui.Modal, title="SCD Queue — Email Verification"):
+    """Collects the 6-digit code we mailed the user."""
+
+    code = discord.ui.TextInput(
+        label="6-digit code",
+        placeholder="123456",
+        min_length=6,
+        max_length=6,
+    )
+
+    def __init__(
+        self,
+        *,
+        bot: "ReservBot",
+        user_id: int,
+        discord_id: str,
+        machine_id: int,
+        college_id: int,
+        full_name: str,
+        email: str,
+        major: str,
+        graduation_year: str,
+    ) -> None:
+        super().__init__()
+        self._bot = bot
+        self._user_id = user_id
+        self._discord_id = discord_id
+        self._machine_id = machine_id
+        self._college_id = college_id
+        self._full_name = full_name
+        self._email = email
+        self._major = major
+        self._graduation_year = graduation_year
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        from bot import email_verification as ev
+
+        ok, email = await ev.verify_code(
+            self._discord_id, self.code.value.strip()
+        )
+        if not ok:
+            await interaction.response.send_message(
+                "Wrong or expired code. Click **Join Queue** again to request "
+                "a new one.",
+                ephemeral=True,
+            )
+            return
+
+        verified_email = email or self._email
+        await ev.mark_user_verified(self._user_id, verified_email)
+        await models.register_user(
+            user_id=self._user_id,
+            full_name=self._full_name,
+            email=verified_email,
+            major=self._major,
+            college_id=self._college_id,
+            graduation_year=self._graduation_year,
+        )
+        machine = await models.get_machine(self._machine_id)
+        if machine is None:
+            await interaction.response.send_message(
+                "Machine not found.", ephemeral=True
+            )
+            return
+
+        existing = await models.get_user_active_entry(
+            self._user_id, self._machine_id
+        )
+        if existing is not None:
+            await interaction.response.send_message(
+                f"You're verified! You're already in the queue for "
+                f"**{machine['name']}**.",
+                ephemeral=True,
+            )
+            return
+
+        await _join_and_dm(
+            interaction=interaction,
+            bot=self._bot,
+            user_id=self._user_id,
+            machine_id=self._machine_id,
+            machine_name=machine["name"],
+            confirmation_prefix=(
+                "Verified! You're registered and joined the queue for"
+            ),
+        )
+
+
+class VerificationLaunchView(discord.ui.View):
+    """Single-button ephemeral view that opens VerificationModal on click.
+
+    Discord forbids opening a modal as the response to a modal submission,
+    so we hand SignupModal an ephemeral message + button. The button's
+    click is a MessageComponent interaction, which IS allowed to send a
+    modal in response.
+    """
+
+    def __init__(
+        self,
+        *,
+        bot: "ReservBot",
+        user_id: int,
+        discord_id: str,
+        machine_id: int,
+        college_id: int,
+        full_name: str,
+        email: str,
+        major: str,
+        graduation_year: str,
+    ) -> None:
+        super().__init__(timeout=600)
+        self._bot = bot
+        self._user_id = user_id
+        self._discord_id = discord_id
+        self._machine_id = machine_id
+        self._college_id = college_id
+        self._full_name = full_name
+        self._email = email
+        self._major = major
+        self._graduation_year = graduation_year
+
+    @discord.ui.button(label="Enter verification code",
+                        style=discord.ButtonStyle.primary)
+    async def open_modal(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await interaction.response.send_modal(
+            VerificationModal(
+                bot=self._bot,
+                user_id=self._user_id,
+                discord_id=self._discord_id,
+                machine_id=self._machine_id,
+                college_id=self._college_id,
+                full_name=self._full_name,
+                email=self._email,
+                major=self._major,
+                graduation_year=self._graduation_year,
+            )
+        )
+
+
 class _LeaveServingButton(discord.ui.Button):
     """Button on LeaveServingView. ``mode`` is 'finish' or 'cancel'."""
 
@@ -210,6 +396,9 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
             self.graduation_year.default = prefill.get("graduation_year") or ""
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        from api.settings_store import get_setting
+        from bot import email_verification as ev
+
         email_val = self.email.value.strip()
         if not _ILLINOIS_EMAIL_RE.match(email_val):
             await interaction.response.send_message(
@@ -224,15 +413,6 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
             )
             return
 
-        await models.register_user(
-            user_id=self._user_id,
-            full_name=self.full_name.value.strip(),
-            email=email_val,
-            major=self.major.value.strip(),
-            college_id=self._college_id,
-            graduation_year=year_val,
-        )
-
         machine = await models.get_machine(self._machine_id)
         if machine is None:
             await interaction.response.send_message(
@@ -240,32 +420,89 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
             )
             return
 
-        existing = await models.get_user_active_entry(self._user_id, self._machine_id)
-        if existing is not None:
+        # Gate: skip verification under public_mode or for already-verified
+        # users whose email hasn't changed. Otherwise issue + send a code.
+        public_mode = (await get_setting("public_mode")) == "true"
+        existing_user = await models.get_user_by_discord_id(
+            str(interaction.user.id)
+        )
+        already_verified = (
+            existing_user is not None
+            and existing_user.get("verified") == 1
+            and existing_user.get("email") == email_val
+        )
+
+        if public_mode or already_verified:
+            await models.register_user(
+                user_id=self._user_id,
+                full_name=self.full_name.value.strip(),
+                email=email_val,
+                major=self.major.value.strip(),
+                college_id=self._college_id,
+                graduation_year=year_val,
+            )
+            existing = await models.get_user_active_entry(
+                self._user_id, self._machine_id
+            )
+            if existing is not None:
+                await interaction.response.send_message(
+                    f"You're registered! You're already in the queue for "
+                    f"**{machine['name']}**.",
+                    ephemeral=True,
+                )
+                return
+            await _join_and_dm(
+                interaction=interaction,
+                bot=self._bot,
+                user_id=self._user_id,
+                machine_id=self._machine_id,
+                machine_name=machine["name"],
+                confirmation_prefix=(
+                    "Welcome! You're registered and joined the queue for"
+                ),
+            )
+            return
+
+        # Verification path — defer registration + queue join until the user
+        # enters the code in the VerificationModal. This means an abandoned
+        # signup never lands as registered=1 with a join slot held.
+        try:
+            code = await ev.issue_code(str(interaction.user.id), email_val)
+            await ev.send_verification_email(email_val, code)
+        except ev.VerificationRateLimitError:
             await interaction.response.send_message(
-                f"You're registered! You're already in the queue for **{machine['name']}**.",
+                "Too many verification requests. Try again in an hour, or "
+                "ask staff for help.",
+                ephemeral=True,
+            )
+            return
+        except ev.EmailSendError:
+            await interaction.response.send_message(
+                "Verification is temporarily unavailable. Please ask staff.",
                 ephemeral=True,
             )
             return
 
-        entry = await models.join_queue(self._user_id, self._machine_id)
-        position = entry["position"]
-        waiting_count = await models.get_waiting_count(self._machine_id)
-
+        # Discord forbids modal-from-modal — hand the user a button that
+        # opens the VerificationModal when clicked (MessageComponent
+        # interactions can send modals in response).
+        view = VerificationLaunchView(
+            bot=self._bot,
+            user_id=self._user_id,
+            discord_id=str(interaction.user.id),
+            machine_id=self._machine_id,
+            college_id=self._college_id,
+            full_name=self.full_name.value.strip(),
+            email=email_val,
+            major=self.major.value.strip(),
+            graduation_year=year_val,
+        )
         await interaction.response.send_message(
-            f"Welcome! You're registered and joined the queue for **{machine['name']}**!\n"
-            f"Your position: **#{position}** ({waiting_count} waiting)",
+            f"We sent a 6-digit code to **{email_val}**. "
+            f"Click the button below to enter it.",
+            view=view,
             ephemeral=True,
         )
-        await self._bot.update_queue_embeds(self._machine_id)
-
-        try:
-            await interaction.user.send(
-                f"You're **#{position}** in the queue for **{machine['name']}**. "
-                f"I'll DM you when it's your turn!"
-            )
-        except discord.Forbidden:
-            pass
 
 
 class QueueCog(commands.Cog):
@@ -372,32 +609,16 @@ class QueueCog(commands.Cog):
             )
             return
 
-        # Join the queue
-        entry = await models.join_queue(user["id"], machine_id)
-        position = entry["position"]
-        waiting_count = await models.get_waiting_count(machine_id)
-
-        await interaction.response.send_message(
-            f"You joined the queue for **{machine['name']}**!\n"
-            f"Your position: **#{position}** ({waiting_count} waiting)",
-            ephemeral=True,
+        # Already-registered users go straight to the queue — verification
+        # is sticky and the gate already ran at signup time.
+        await _join_and_dm(
+            interaction=interaction,
+            bot=self.bot,
+            user_id=user["id"],
+            machine_id=machine_id,
+            machine_name=machine["name"],
+            confirmation_prefix="You joined the queue for",
         )
-
-        # Update the pinned embed
-        await self.bot.update_queue_embeds(machine_id)
-
-        # DM confirmation
-        try:
-            await interaction.user.send(
-                f"You're **#{position}** in the queue for **{machine['name']}**. "
-                f"I'll DM you when it's your turn!"
-            )
-        except discord.Forbidden:
-            log.warning(
-                "Cannot DM user %s (%s) -- DMs disabled",
-                interaction.user.display_name,
-                interaction.user.id,
-            )
 
     # --------------------------------------------------------------------- #
     # Check Position

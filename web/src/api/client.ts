@@ -1,13 +1,21 @@
 import type {
+  AgentConversationDetail,
+  AgentConversationSummary,
+  AgentModelsResponse,
+  AgentPostRequest,
+  AgentPostResponse,
   AnalyticsResponse,
+  ChartSpec,
   ChatConversationDetail,
   ChatConversationSummary,
   ChatModelsResponse,
   ChatPostRequest,
   ChatPostResponse,
   CollegeSummary,
+  FeatureFlags,
   Machine,
   MachineQueue,
+  PinnedChart,
   QueueEntry,
   TodayResponse,
 } from "./types";
@@ -95,9 +103,17 @@ export const login = (username: string, password: string) =>
   );
 
 export const fetchMe = () =>
-  request<{ username: string; staff_id: number; role: "admin" | "staff" }>(
-    "/auth/me"
-  );
+  request<{
+    username: string;
+    staff_id: number;
+    role: "admin" | "staff";
+    onboarded_at: string | null;
+  }>("/auth/me");
+
+export const fetchFeatures = () => request<FeatureFlags>("/me/features");
+
+export const markOnboarded = () =>
+  request<{ status: string }>("/auth/me/onboarded", { method: "POST" });
 
 // -- Machines --
 
@@ -278,3 +294,114 @@ export const deleteChatConversation = (id: number) =>
 
 export const listChatModels = () =>
   request<ChatModelsResponse>("/analytics/chat/models");
+
+// -- Pinned charts --
+
+export const listPinnedCharts = () =>
+  request<PinnedChart[]>("/pinned-charts");
+
+export const pinChart = (chart_spec: ChartSpec, title: string) =>
+  request<PinnedChart>("/pinned-charts", {
+    method: "POST",
+    body: JSON.stringify({ chart_spec, title }),
+  });
+
+export const refreshPinnedChart = (id: number) =>
+  request<PinnedChart>(`/pinned-charts/${id}/refresh`, { method: "POST" });
+
+export const unpinChart = (id: number) =>
+  request<{ status: string }>(`/pinned-charts/${id}`, { method: "DELETE" });
+
+// -- Data-analyst agent --
+
+export const postAgent = (body: AgentPostRequest) =>
+  request<AgentPostResponse>("/analytics/agent", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const listAgentConversations = () =>
+  request<AgentConversationSummary[]>("/analytics/agent/conversations");
+
+export const getAgentConversation = (id: number) =>
+  request<AgentConversationDetail>(`/analytics/agent/conversations/${id}`);
+
+export const deleteAgentConversation = (id: number) =>
+  request<{ status: string }>(`/analytics/agent/conversations/${id}`, {
+    method: "DELETE",
+  });
+
+export const listAgentModels = () =>
+  request<AgentModelsResponse>("/analytics/agent/models");
+
+/**
+ * Stream agent reply as SSE.
+ *
+ * Event types:
+ *   - {type:"meta", conversation_id}
+ *   - {type:"tool_call", name, args}
+ *   - {type:"chart", spec}
+ *   - {type:"delta", content}
+ *   - {type:"done", message_id}
+ *   - {type:"error", detail}
+ */
+export async function postAgentStream(
+  body: AgentPostRequest,
+  handlers: {
+    onMeta?: (conversationId: number) => void;
+    onToolCall?: (name: string, args: unknown) => void;
+    onChart?: (spec: ChartSpec) => void;
+    onDelta?: (content: string) => void;
+    onDone?: (messageId: number) => void;
+    onError?: (detail: string) => void;
+  }
+): Promise<void> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+  };
+  const token = getAuthToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(`${BASE}/analytics/agent/stream`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) {
+    setAuthToken(null);
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok || !res.body) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.detail || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const line = frame.split("\n").find((l) => l.startsWith("data: "));
+      if (!line) continue;
+      try {
+        const evt = JSON.parse(line.slice(6));
+        if (evt.type === "meta") handlers.onMeta?.(evt.conversation_id);
+        else if (evt.type === "tool_call")
+          handlers.onToolCall?.(evt.name, evt.args);
+        else if (evt.type === "chart") handlers.onChart?.(evt.spec);
+        else if (evt.type === "delta") handlers.onDelta?.(evt.content);
+        else if (evt.type === "done") handlers.onDone?.(evt.message_id);
+        else if (evt.type === "error") handlers.onError?.(evt.detail);
+      } catch {
+        /* skip malformed frames */
+      }
+    }
+  }
+}

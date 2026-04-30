@@ -769,6 +769,17 @@ async def mark_reminded(entry_id: int) -> None:
     await db.commit()
 
 
+async def set_join_dm_message_id(entry_id: int, message_id: int) -> None:
+    """Stamp the Discord message ID of the join-confirmation DM so the bot
+    can later edit the same message with a live rank."""
+    db = await get_db()
+    await db.execute(
+        "UPDATE queue_entries SET join_dm_message_id = ? WHERE id = ?",
+        (str(message_id), entry_id),
+    )
+    await db.commit()
+
+
 async def reset_reminder(entry_id: int) -> None:
     """Reset the reminded flag so the timer restarts."""
     db = await get_db()
@@ -1312,3 +1323,165 @@ async def feedback_aggregates_by_college(
         for row in rows
     }
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data-analyst agent helpers (mirror chat_* helpers)
+# ─────────────────────────────────────────────────────────────────────────────
+
+import json as _json
+
+
+async def create_agent_conversation(*, staff_user_id: int, title: str) -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        "INSERT INTO agent_conversations (staff_user_id, title) "
+        "VALUES (?, ?) RETURNING *",
+        (staff_user_id, title),
+    )
+    row = await cursor.fetchone()
+    await db.commit()
+    return dict(row)
+
+
+async def get_agent_conversation(conversation_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM agent_conversations WHERE id = ?", (conversation_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def list_agent_conversations(staff_user_id: int) -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM agent_conversations WHERE staff_user_id = ? "
+        "ORDER BY updated_at DESC",
+        (staff_user_id,),
+    )
+    return [dict(r) for r in await cursor.fetchall()]
+
+
+async def append_agent_message(
+    *, conversation_id: int, role: str, content: str,
+    tool_call_id: str | None = None,
+    tool_calls_json: str | None = None,
+    chart_spec_json: str | None = None,
+) -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        """
+        INSERT INTO agent_messages
+            (conversation_id, role, content, tool_call_id,
+             tool_calls_json, chart_spec_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        RETURNING *
+        """,
+        (conversation_id, role, content, tool_call_id,
+         tool_calls_json, chart_spec_json),
+    )
+    row = await cursor.fetchone()
+    await db.execute(
+        "UPDATE agent_conversations SET updated_at = datetime('now') "
+        "WHERE id = ?",
+        (conversation_id,),
+    )
+    await db.commit()
+    return dict(row)
+
+
+async def get_agent_messages(conversation_id: int) -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM agent_messages WHERE conversation_id = ? "
+        "ORDER BY id ASC",
+        (conversation_id,),
+    )
+    return [dict(r) for r in await cursor.fetchall()]
+
+
+async def delete_agent_conversation(conversation_id: int) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM agent_conversations WHERE id = ?", (conversation_id,)
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pinned charts helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def create_pinned_chart(
+    *, chart_spec: dict, title: str, created_by: int,
+) -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT COALESCE(MAX(pin_order), 0) + 1 FROM pinned_charts"
+    )
+    next_order = (await cursor.fetchone())[0]
+    cursor = await db.execute(
+        """
+        INSERT INTO pinned_charts (chart_spec_json, title, created_by, pin_order)
+        VALUES (?, ?, ?, ?)
+        RETURNING *
+        """,
+        (_json.dumps(chart_spec), title, created_by, next_order),
+    )
+    row = await cursor.fetchone()
+    await db.commit()
+    return dict(row)
+
+
+async def list_pinned_charts() -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM pinned_charts ORDER BY pin_order ASC, id ASC"
+    )
+    return [dict(r) for r in await cursor.fetchall()]
+
+
+async def get_pinned_chart(chart_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM pinned_charts WHERE id = ?", (chart_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def delete_pinned_chart(chart_id: int) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM pinned_charts WHERE id = ?", (chart_id,)
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Staff onboarding
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def mark_staff_onboarded(staff_user_id: int) -> None:
+    """Stamp ``onboarded_at`` on first call; subsequent calls are no-ops."""
+    db = await get_db()
+    await db.execute(
+        "UPDATE staff_users SET onboarded_at = datetime('now') "
+        "WHERE id = ? AND onboarded_at IS NULL",
+        (staff_user_id,),
+    )
+    await db.commit()
+
+
+async def get_staff_onboarded_at(staff_user_id: int) -> str | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT onboarded_at FROM staff_users WHERE id = ?", (staff_user_id,)
+    )
+    row = await cursor.fetchone()
+    return row["onboarded_at"] if row else None

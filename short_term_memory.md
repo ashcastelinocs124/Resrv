@@ -1,5 +1,174 @@
 # Short-term Memory
 
+## 2026-04-29 — Illinois Email Verification
+Shipped on `feat/customizable-admin`. 305 tests passing.
+
+**Schema:**
+- `users.verified_at TEXT NULL` (commit `60e0b6c`) — stamped by
+  `mark_user_verified` when a code is accepted.
+- `verification_codes.attempts INTEGER NOT NULL DEFAULT 0` (commit
+  `baa8e0b`) — count of wrong-code submissions; the row is invalidated
+  (`used=1`) once it hits `MAX_WRONG_ATTEMPTS = 5`.
+
+**Config (commit `d4fc3d1`):**
+- `smtp_host="smtp.gmail.com"`, `smtp_port=587`, `smtp_username`,
+  `smtp_password`, `smtp_from`, `verification_code_ttl_minutes=10`,
+  `verification_max_codes_per_hour=5`. Gmail-default but the host/port
+  are env-overridable, so UIUC SMTP / SES / Mailtrap work without code
+  changes.
+
+**Service module — `bot/email_verification.py` (commit `baa8e0b`):**
+- `_smtp_configured()` — guard so missing creds raise `EmailSendError`
+  instead of crashing on import. Mirrors the OpenAI lazy-factory pattern.
+- `issue_code(discord_id, email) -> str` — generates 6 digits via
+  `secrets.randbelow(1_000_000)`, marks all prior unused codes for the
+  same `discord_id` as `used=1` (so only the latest works), enforces
+  per-hour rate limit via `VerificationRateLimitError`.
+- `send_verification_email(to_email, code)` — `aiosmtplib.send` over
+  STARTTLS:587. Plain-text body with the 6 digits + 10-min TTL note.
+- `verify_code(discord_id, code) -> tuple[bool, str | None]` — accepts
+  the latest unused, unexpired row; on miss bumps `attempts` and locks
+  the row at 5; returns `(True, email)` on success and immediately
+  flips `used=1`.
+- `mark_user_verified(user_id, email)` — `UPDATE users SET verified=1,
+  email=?, verified_at=datetime('now')`.
+
+**Cog flow change — `bot/cogs/queue.py` (commit `29640dd`):**
+- New module-level helper `_join_and_dm(interaction, bot, user_id,
+  machine_id, machine_name, confirmation_prefix)` — pulls the duplicated
+  join + ephemeral confirmation + DM-with-live-rank logic out of
+  `SignupModal.on_submit` and `_handle_join` so the new
+  `VerificationModal.on_submit` reuses it.
+- New `VerificationModal` (single 6-digit `TextInput`, `min_length=6`,
+  `max_length=6`). On submit: `verify_code` → `mark_user_verified` →
+  `register_user` (the deferred path) → `_join_and_dm`. Wrong code
+  shows an ephemeral retry message; the modal closes and the user
+  clicks Join Queue again to request a fresh code.
+- `SignupModal.on_submit` now branches on:
+  - `public_mode == "true"` → fast path (no email; preserves existing
+    behaviour for events).
+  - existing user with `verified=1` AND matching email → fast path
+    (verification is sticky).
+  - else → `issue_code` + `send_verification_email`, then
+    `interaction.response.send_modal(VerificationModal(...))`. If the
+    rate limit is hit or SMTP is unavailable, an ephemeral message
+    explains and aborts.
+- `register_user` is **deferred** to the verification step on the
+  unverified path, so an abandoned signup never leaves a registered
+  ghost row.
+
+**Tests added (10 total):**
+- `tests/test_db.py::test_users_has_verified_at` (1).
+- `tests/test_email_verification.py` (7) — issue/verify/expire/lock/
+  rate-limit/mark-verified/SMTP-not-configured.
+- `tests/test_queue_signup_flow.py` (3) — sticky-verification contract,
+  public_mode bypass, code-issuance flow with mocked SMTP.
+- `tests/test_signup_flow.py::test_modal_submit_calls_register_user_with_college_id`
+  was updated to set `public_mode="true"` so it exercises the still-
+  synchronous fast path.
+
+**Conventions reinforced:**
+- Lazy SMTP factory matches `_make_openai_client()` — missing creds
+  degrade to a 503-style "service unavailable" instead of crashing.
+- Settings cache invalidation in `tests/conftest.py` (from 2026-04-27)
+  was load-bearing for the `public_mode` tests added here.
+- The `verification_codes` schema was already on disk from the very
+  first MVP — this work reused it, didn't redesign it.
+
+**Manual smoke checklist** (run with real Gmail App Password):
+- Set `smtp_username` + `smtp_password` (16-char App Password) + restart.
+- Click Join in Discord on a fresh account → SignupModal → submit →
+  email arrives within ~5s → VerificationModal opens.
+- Wrong code → ephemeral "Wrong or expired" → user clicks Join again
+  → new code emailed (rate-limit allows 5/hour).
+- Right code → user lands in queue with the live-rank DM.
+- Click Join again on same machine → "already in queue" (no email).
+- Set `public_mode=true` via admin Settings → new join skips email.
+
+## 2026-04-27 — Self-Service Staff Tooling
+Shipped on `feat/customizable-admin`. 294 tests passing, `npx tsc -b` clean.
+
+**Schema (commits 4b25efd + 6dc1d66):**
+- `agent_conversations` (id, staff_user_id FK, title, created_at, updated_at).
+- `agent_messages` (FK ON DELETE CASCADE, role CHECK, content,
+  `tool_call_id`, `tool_calls_json`, `chart_spec_json`).
+- `pinned_charts` (id, chart_spec_json, title, created_by FK, pin_order, created_at).
+- `staff_users.onboarded_at TEXT NULL`; existing rows backfilled to
+  `datetime('now')` so only NEW staff trigger the first-login tour.
+- Seeded settings: `data_analyst_enabled=false`,
+  `data_analyst_visible_to_staff=false`.
+- Indexes `idx_agent_msgs_conv` and `idx_pinned_charts_order` created
+  post-CREATE in `_migrate`.
+
+**Endpoints (commits c39f8d2 + 0f1b4e5 + 84313f6):**
+- `GET /api/me/features` → `{data_analyst_visible}`. Admin sees true when
+  master is on; staff sees true only when both master + visibility flags on.
+- `POST /api/auth/me/onboarded` stamps `onboarded_at`. Idempotent (200 even
+  if already stamped). `/api/auth/me` now exposes `onboarded_at`.
+- `require_data_analyst` dependency in `api/auth.py`: 503 when master off,
+  403 when visibility off and caller is staff.
+- `POST/GET/DELETE /api/analytics/agent` + `/conversations` + `/models` +
+  SSE `/stream`. OpenAI tool-call loop, 4 round-trip cap (forced fallback
+  with `tool_choice="none"` after cap), 1000-row tool cap. Cross-user reads
+  return 404 (CLAUDE.md convention).
+- `GET/POST/DELETE /api/pinned-charts` + `POST /{id}/refresh`. Refresh
+  re-runs the chart's saved `context.{filter, group_by, metric, period}`
+  via `query_jobs` and rewrites `data`.
+- `data_analyst_enabled` + `data_analyst_visible_to_staff` added to
+  `ALLOWED_KEYS` in `api/routes/settings.py`.
+
+**Agent tools (commit 847d8b5, `api/routes/agent_tools.py`):**
+- `query_jobs(filter, group_by, metric, period)` — group_by ∈
+  {machine, college, status, day, hour, user}; metric ∈ {count,
+  completed_count, no_show_count, cancelled_count, failure_count,
+  unique_users, avg_wait_mins, avg_serve_mins, avg_rating}.
+- `query_feedback(filter, group_by, period)` — group_by ∈
+  {machine, college, rating}; emits avg_rating + count.
+- `query_funnel(filter, period)` — joined/served/completed/no_show/
+  cancelled/failure scalars.
+- `top_n(filter, group_by, metric, n, period)` — caps n at 100.
+- `compare_periods(filter, metric, period_a, period_b)` — returns
+  `{a, b, delta_abs, delta_pct}` with named windows
+  (today/yesterday/this_week/last_week/this_month/last_month).
+- `make_chart(data, type, x, y, title, context?)` — pure formatter; type
+  ∈ {bar, line, pie, table}; `context` preserved for refresh.
+- All tools cap at 1000 rows + emit `truncated: bool`.
+
+**SSE protocol (`/api/analytics/agent/stream`):**
+`meta` → `tool_call*` → `chart?` → `delta` (single, full final text) →
+`done`. `error` short-circuits. Inner OpenAI calls are non-streaming;
+SSE frames *loop progress* rather than token deltas (simpler than the
+chat streaming path).
+
+**Frontend (commits 84313f6 + 2db2918 + da81803 + 1ba2503):**
+- `<ChartFromSpec>` dispatches bar/line/pie/table to Recharts.
+- `<CustomCharts>` section below `MachineTable` on `/analytics`; lists
+  `listPinnedCharts()` results, hidden when empty. Refresh + Unpin
+  per card with confirm.
+- `<AnalystAgent>` floating panel, **bottom-LEFT** (existing
+  `<AnalyticsChat>` is bottom-RIGHT). Uses `postAgentStream` with
+  tool_call/chart event handlers. Inline chart rendering + Pin button
+  with title-edit row → `pinChart(spec, title)`. Mounted only when
+  `fetchFeatures().data_analyst_visible` is true.
+- `<AdminSettings>` gains a "Data analyst agent" section with two
+  checkboxes; `visible_to_staff` is disabled when the master is off.
+- Onboarding tour: `driver.js`, 11 steps, `requiresAdmin` filter for
+  Staff/Settings stops. `runTour(navigate, isAdmin)` waits up to 1.5s
+  for each anchor to render after `navigateTo`. Auto-runs in
+  `<OnboardingGate>` (lives inside `<AuthProvider>` + Router) when
+  `onboarded_at` is null; calls `markOnboarded()` after the tour
+  completes. NavBar gains a "Replay tour" button that re-runs without
+  re-stamping.
+- Auth context tracks `onboardedAt` and exposes `markOnboardedLocal()`.
+
+**Conventions reinforced:**
+- Settings cache (`api/settings_store._cache`) is module-level — leaks
+  across in-memory DB resets. `tests/conftest.py` now invalidates it on
+  every test (`_use_in_memory_db` autouse fixture).
+- Server-side model allowlist mirrored in
+  `api/routes/agent.py::ALLOWED_MODELS`; default `gpt-5.4-mini`.
+- `mark_staff_onboarded` UPDATE is idempotent (`WHERE onboarded_at IS NULL`).
+
 ## 2026-04-27 — Post-Visit Feedback Form
 Shipped on `feat/customizable-admin`. 231 tests passing, tsc clean.
 

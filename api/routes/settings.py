@@ -17,6 +17,8 @@ ALLOWED_KEYS = {
     "agent_tick_seconds",
     "public_mode",
     "maintenance_banner",
+    "data_analyst_enabled",
+    "data_analyst_visible_to_staff",
 }
 
 

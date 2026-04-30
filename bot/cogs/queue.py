@@ -150,6 +150,61 @@ class VerificationModal(discord.ui.Modal, title="SCD Queue — Email Verificatio
         )
 
 
+class VerificationLaunchView(discord.ui.View):
+    """Single-button ephemeral view that opens VerificationModal on click.
+
+    Discord forbids opening a modal as the response to a modal submission,
+    so we hand SignupModal an ephemeral message + button. The button's
+    click is a MessageComponent interaction, which IS allowed to send a
+    modal in response.
+    """
+
+    def __init__(
+        self,
+        *,
+        bot: "ReservBot",
+        user_id: int,
+        discord_id: str,
+        machine_id: int,
+        college_id: int,
+        full_name: str,
+        email: str,
+        major: str,
+        graduation_year: str,
+    ) -> None:
+        super().__init__(timeout=600)
+        self._bot = bot
+        self._user_id = user_id
+        self._discord_id = discord_id
+        self._machine_id = machine_id
+        self._college_id = college_id
+        self._full_name = full_name
+        self._email = email
+        self._major = major
+        self._graduation_year = graduation_year
+
+    @discord.ui.button(label="Enter verification code",
+                        style=discord.ButtonStyle.primary)
+    async def open_modal(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await interaction.response.send_modal(
+            VerificationModal(
+                bot=self._bot,
+                user_id=self._user_id,
+                discord_id=self._discord_id,
+                machine_id=self._machine_id,
+                college_id=self._college_id,
+                full_name=self._full_name,
+                email=self._email,
+                major=self._major,
+                graduation_year=self._graduation_year,
+            )
+        )
+
+
 class _LeaveServingButton(discord.ui.Button):
     """Button on LeaveServingView. ``mode`` is 'finish' or 'cancel'."""
 
@@ -428,18 +483,25 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
             )
             return
 
-        await interaction.response.send_modal(
-            VerificationModal(
-                bot=self._bot,
-                user_id=self._user_id,
-                discord_id=str(interaction.user.id),
-                machine_id=self._machine_id,
-                college_id=self._college_id,
-                full_name=self.full_name.value.strip(),
-                email=email_val,
-                major=self.major.value.strip(),
-                graduation_year=year_val,
-            )
+        # Discord forbids modal-from-modal — hand the user a button that
+        # opens the VerificationModal when clicked (MessageComponent
+        # interactions can send modals in response).
+        view = VerificationLaunchView(
+            bot=self._bot,
+            user_id=self._user_id,
+            discord_id=str(interaction.user.id),
+            machine_id=self._machine_id,
+            college_id=self._college_id,
+            full_name=self.full_name.value.strip(),
+            email=email_val,
+            major=self.major.value.strip(),
+            graduation_year=year_val,
+        )
+        await interaction.response.send_message(
+            f"We sent a 6-digit code to **{email_val}**. "
+            f"Click the button below to enter it.",
+            view=view,
+            ephemeral=True,
         )
 
 

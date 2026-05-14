@@ -27,8 +27,9 @@ export function MachineColumn({ queue, onRefresh }: Props) {
 
   const servingByUnit = new Map<number, string>();
   for (const e of serving) {
-    if (e.unit_id != null && e.discord_name) {
-      servingByUnit.set(e.unit_id, e.discord_name);
+    const label = e.full_name ?? e.discord_name;
+    if (e.unit_id != null && label) {
+      servingByUnit.set(e.unit_id, label);
     }
   }
   const showUnitStrip =

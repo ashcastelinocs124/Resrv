@@ -43,7 +43,7 @@ export function QueueCard({
             {entry.purpose === "training" && (
               <span className="inline-flex items-center rounded-md bg-[#E84A27]/10 text-[#E84A27] px-1.5 py-0.5 text-[10px] font-bold mr-1.5 uppercase tracking-wide">Train</span>
             )}
-            {entry.discord_name ?? "Unknown"}
+            {entry.full_name ?? entry.discord_name ?? "Unknown"}
           </p>
           <p className="text-xs text-gray-400 mt-0.5">
             {entry.status === "serving"

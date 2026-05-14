@@ -65,6 +65,7 @@ class ReservBot(commands.Bot):
         await self.load_extension("bot.cogs.queue")
         await self.load_extension("bot.cogs.admin")
         await self.load_extension("bot.cogs.dm")
+        await self.load_extension("bot.cogs.mentor")
         log.info("Cogs loaded")
 
         # 3. Persistent views (one per machine)
@@ -92,6 +93,9 @@ class ReservBot(commands.Bot):
 
         # Lock the channel so the dashboard stays at the bottom permanently
         await self._lock_queue_channel()
+
+        # Shifts channel + panel (Shop Team-gated)
+        await self._setup_shifts_panel()
 
         # Start the autonomous queue agent
         start_agent(self)
@@ -133,6 +137,26 @@ class ReservBot(commands.Bot):
     # Embed management
     # ------------------------------------------------------------------ #
 
+    async def _setup_shifts_panel(self) -> None:
+        """Idempotent: ensure #reserve-shifts exists, lock it to the Shop Team role, post panel."""
+        from bot.cogs import mentor as mentor_cog
+
+        guild = self.get_guild(settings.discord_guild_id)
+        if guild is None:
+            log.warning(
+                "Guild %d not in cache -- skipping shifts setup",
+                settings.discord_guild_id,
+            )
+            return
+
+        # One-shot cleanup of the deprecated `mentor` Discord role.
+        await mentor_cog.delete_legacy_mentor_role(guild)
+
+        shifts_channel = await mentor_cog.ensure_shifts_channel(guild)
+        if shifts_channel is not None:
+            await mentor_cog.lock_shifts_channel(guild, shifts_channel)
+        await mentor_cog.post_or_refresh_panel(self)
+
     async def _lock_queue_channel(self) -> None:
         """Deny @everyone send/react/thread perms on the queue channel.
 
@@ -172,7 +196,7 @@ class ReservBot(commands.Bot):
         serving_map: dict[int, str] = {}
         for e in entries:
             if e["status"] == "serving" and e.get("unit_id"):
-                serving_map[e["unit_id"]] = e["discord_name"]
+                serving_map[e["unit_id"]] = e.get("full_name") or e["discord_name"]
         return [
             {
                 "id": u["id"],

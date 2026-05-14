@@ -556,7 +556,7 @@ async def get_queue_for_machine(
     """Active queue entries (waiting + serving) for a machine, ordered by position."""
     db = await get_db()
     sql = """
-        SELECT qe.*, u.discord_id, u.discord_name
+        SELECT qe.*, u.discord_id, u.discord_name, u.full_name
         FROM queue_entries qe
         JOIN users u ON u.id = qe.user_id
         WHERE qe.machine_id = ?
@@ -592,7 +592,7 @@ async def get_user_active_entries(user_id: int) -> list[dict[str, Any]]:
     db = await get_db()
     cursor = await db.execute(
         """
-        SELECT qe.*, u.discord_id, u.discord_name, m.name as machine_name, m.slug as machine_slug
+        SELECT qe.*, u.discord_id, u.discord_name, u.full_name, m.name as machine_name, m.slug as machine_slug
         FROM queue_entries qe
         JOIN users u ON u.id = qe.user_id
         JOIN machines m ON m.id = qe.machine_id
@@ -679,7 +679,7 @@ async def undo_last_removal(machine_id: int) -> dict[str, Any] | None:
     db = await get_db()
     cursor = await db.execute(
         """
-        SELECT qe.*, u.discord_id, u.discord_name
+        SELECT qe.*, u.discord_id, u.discord_name, u.full_name
         FROM queue_entries qe
         JOIN users u ON u.id = qe.user_id
         WHERE qe.machine_id = ?
@@ -739,7 +739,7 @@ async def get_serving_entry(machine_id: int) -> dict[str, Any] | None:
     db = await get_db()
     cursor = await db.execute(
         """
-        SELECT qe.*, u.discord_id, u.discord_name
+        SELECT qe.*, u.discord_id, u.discord_name, u.full_name
         FROM queue_entries qe
         JOIN users u ON u.id = qe.user_id
         WHERE qe.machine_id = ? AND qe.status = 'serving'
@@ -756,7 +756,7 @@ async def get_next_waiting(machine_id: int) -> dict[str, Any] | None:
     db = await get_db()
     cursor = await db.execute(
         """
-        SELECT qe.*, u.discord_id, u.discord_name
+        SELECT qe.*, u.discord_id, u.discord_name, u.full_name
         FROM queue_entries qe
         JOIN users u ON u.id = qe.user_id
         WHERE qe.machine_id = ? AND qe.status = 'waiting'
@@ -777,7 +777,7 @@ async def get_entries_needing_reminder(
     db = await get_db()
     cursor = await db.execute(
         """
-        SELECT qe.*, u.discord_id, u.discord_name
+        SELECT qe.*, u.discord_id, u.discord_name, u.full_name
         FROM queue_entries qe
         JOIN users u ON u.id = qe.user_id
         WHERE qe.status = 'serving'
@@ -797,7 +797,7 @@ async def get_entries_past_grace(
     total_minutes = reminder_minutes + grace_minutes
     cursor = await db.execute(
         """
-        SELECT qe.*, u.discord_id, u.discord_name
+        SELECT qe.*, u.discord_id, u.discord_name, u.full_name
         FROM queue_entries qe
         JOIN users u ON u.id = qe.user_id
         WHERE qe.status = 'serving'
@@ -822,7 +822,7 @@ async def get_entries_past_time_limit() -> list[dict[str, Any]]:
     db = await get_db()
     cursor = await db.execute(
         """
-        SELECT qe.*, u.discord_id, u.discord_name, m.name AS machine_name,
+        SELECT qe.*, u.discord_id, u.discord_name, u.full_name, m.name AS machine_name,
                m.time_limit_minutes
         FROM queue_entries qe
         JOIN users u    ON u.id = qe.user_id
@@ -871,7 +871,7 @@ async def get_entries_time_limit_no_response(grace_minutes: int) -> list[dict[st
     db = await get_db()
     cursor = await db.execute(
         """
-        SELECT qe.*, u.discord_id, u.discord_name, m.name AS machine_name,
+        SELECT qe.*, u.discord_id, u.discord_name, u.full_name, m.name AS machine_name,
                m.time_limit_minutes
         FROM queue_entries qe
         JOIN users u    ON u.id = qe.user_id
@@ -1630,3 +1630,119 @@ async def get_staff_onboarded_at(staff_user_id: int) -> str | None:
     )
     row = await cursor.fetchone()
     return row["onboarded_at"] if row else None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mentor shifts + training assignments
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class MentorShiftAlreadyOpenError(Exception):
+    """Raised when a mentor tries to start a shift while one is already open."""
+
+
+async def start_mentor_shift(discord_id: str) -> dict[str, Any]:
+    """Open a new shift row for ``discord_id``. Raises if one is already open."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "INSERT INTO mentor_shifts (discord_id) VALUES (?) RETURNING *",
+            (discord_id,),
+        )
+        row = await cursor.fetchone()
+        await db.commit()
+        return dict(row)
+    except aiosqlite.IntegrityError as exc:
+        raise MentorShiftAlreadyOpenError(str(exc)) from exc
+
+
+async def end_mentor_shift(discord_id: str) -> dict[str, Any] | None:
+    """Close the currently-open shift for ``discord_id``. Returns the row or None."""
+    db = await get_db()
+    cursor = await db.execute(
+        """
+        UPDATE mentor_shifts
+        SET ended_at = datetime('now')
+        WHERE discord_id = ? AND ended_at IS NULL
+        RETURNING *
+        """,
+        (discord_id,),
+    )
+    row = await cursor.fetchone()
+    await db.commit()
+    return dict(row) if row else None
+
+
+async def list_open_mentor_shifts() -> list[dict[str, Any]]:
+    """Open shifts ordered by ``started_at`` ascending (longest-on-shift first)."""
+    db = await get_db()
+    cursor = await db.execute(
+        """
+        SELECT id, discord_id, started_at
+        FROM mentor_shifts
+        WHERE ended_at IS NULL
+        ORDER BY started_at ASC
+        """
+    )
+    return _rows_to_dicts(await cursor.fetchall())
+
+
+async def pick_free_mentor() -> str | None:
+    """Return the on-shift mentor with the fewest active training assignments.
+
+    "Active" means a training entry currently waiting or serving today. Ties
+    break to the mentor who has been on-shift longest (so workload spreads out
+    in arrival order). Returns the mentor's ``discord_id``, or None if no
+    one is on shift.
+    """
+    db = await get_db()
+    cursor = await db.execute(
+        """
+        SELECT ms.discord_id,
+               COUNT(qe.id) AS load
+        FROM mentor_shifts ms
+        LEFT JOIN queue_entries qe
+          ON qe.assigned_mentor_discord_id = ms.discord_id
+         AND qe.purpose = 'training'
+         AND qe.status IN ('waiting','serving')
+         AND date(qe.joined_at) = date('now')
+        WHERE ms.ended_at IS NULL
+        GROUP BY ms.discord_id
+        ORDER BY load ASC, ms.started_at ASC
+        LIMIT 1
+        """
+    )
+    row = await cursor.fetchone()
+    return row["discord_id"] if row else None
+
+
+async def assign_mentor_to_entry(
+    entry_id: int, mentor_discord_id: str
+) -> None:
+    """Stamp ``assigned_mentor_discord_id`` on a queue entry."""
+    db = await get_db()
+    await db.execute(
+        "UPDATE queue_entries SET assigned_mentor_discord_id = ? WHERE id = ?",
+        (mentor_discord_id, entry_id),
+    )
+    await db.commit()
+
+
+async def get_unassigned_training_entries() -> list[dict[str, Any]]:
+    """Active training entries that have no mentor assigned yet (today, oldest first)."""
+    db = await get_db()
+    cursor = await db.execute(
+        """
+        SELECT qe.*, u.discord_id, u.discord_name, u.full_name,
+               m.name AS machine_name, m.slug AS machine_slug
+        FROM queue_entries qe
+        JOIN users u ON u.id = qe.user_id
+        JOIN machines m ON m.id = qe.machine_id
+        WHERE qe.purpose = 'training'
+          AND qe.status IN ('waiting','serving')
+          AND qe.assigned_mentor_discord_id IS NULL
+          AND date(qe.joined_at) = date('now')
+        ORDER BY qe.joined_at ASC
+        """
+    )
+    return _rows_to_dicts(await cursor.fetchall())

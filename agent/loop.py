@@ -233,8 +233,9 @@ async def _notify_staff_time_limit_no_response() -> None:
                 channel = _bot.get_channel(settings.admin_channel_id)
                 if channel is None:
                     channel = await _bot.fetch_channel(settings.admin_channel_id)
+                display_name = entry.get("full_name") or entry["discord_name"]
                 await channel.send(
-                    f"⚠️ **{entry['discord_name']}** on "
+                    f"⚠️ **{display_name}** on "
                     f"**{entry['machine_name']}** hasn't responded to "
                     f"time-limit check-in (serving for {total_mins} min)"
                 )

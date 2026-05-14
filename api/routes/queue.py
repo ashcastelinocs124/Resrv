@@ -42,6 +42,7 @@ class QueueEntryOut(BaseModel):
     unit_id: int | None = None
     discord_id: str | None = None
     discord_name: str | None = None
+    full_name: str | None = None
     purpose: str = "production"
 
 
@@ -79,7 +80,7 @@ async def _get_entry_or_404(entry_id: int) -> dict[str, Any]:
     db = await get_db()
     cursor = await db.execute(
         """
-        SELECT qe.*, u.discord_id, u.discord_name
+        SELECT qe.*, u.discord_id, u.discord_name, u.full_name
         FROM queue_entries qe
         JOIN users u ON u.id = qe.user_id
         WHERE qe.id = ?
@@ -156,6 +157,7 @@ async def join_machine_queue(machine_id: int, body: JoinRequest) -> dict:
     # The join_queue RETURNING * doesn't include user fields, so enrich
     entry["discord_id"] = body.discord_id
     entry["discord_name"] = body.discord_name
+    entry["full_name"] = user.get("full_name")
     notify_embed_update(machine_id)
     return entry
 

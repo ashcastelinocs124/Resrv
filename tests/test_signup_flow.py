@@ -83,7 +83,8 @@ async def test_modal_submit_calls_register_user_with_college_id(
         college_id=college["id"], prefill=None,
     )
     # Bypass discord.ui.TextInput by mocking on the instance
-    modal.full_name = MagicMock(value="Sub User")
+    modal.first_name = MagicMock(value="Sub")
+    modal.last_name = MagicMock(value="User")
     modal.email = MagicMock(value="sub@illinois.edu")
     modal.major = MagicMock(value="CS")
     modal.graduation_year = MagicMock(value="2027")
@@ -92,6 +93,7 @@ async def test_modal_submit_calls_register_user_with_college_id(
     fetched = await models.get_user_by_discord_id("556")
     assert fetched["college_id"] == college["id"]
     assert fetched["registered"] == 1
+    assert fetched["full_name"] == "Sub User"
 
 
 async def test_resignup_prefills_existing_values(

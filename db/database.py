@@ -183,10 +183,19 @@ async def _create_tables(db: aiosqlite.Connection) -> None:
             created_at      TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS mentor_shifts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id  TEXT    NOT NULL,
+            started_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            ended_at    TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_queue_status
             ON queue_entries(status);
         CREATE INDEX IF NOT EXISTS idx_queue_machine_date
             ON queue_entries(machine_id, joined_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_mentor_shifts_open
+            ON mentor_shifts(discord_id) WHERE ended_at IS NULL;
         """
     )
 
@@ -506,6 +515,30 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         await db.execute(
             "ALTER TABLE queue_entries ADD COLUMN extended_until TEXT"
         )
+
+    # queue_entries.assigned_mentor_discord_id — set when a training entry
+    # has been routed to a specific on-shift mentor.
+    if "assigned_mentor_discord_id" not in qe_cols:
+        await db.execute(
+            "ALTER TABLE queue_entries "
+            "ADD COLUMN assigned_mentor_discord_id TEXT"
+        )
+
+    # mentor_shifts: one open shift (ended_at IS NULL) per mentor at a time.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mentor_shifts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id  TEXT    NOT NULL,
+            started_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            ended_at    TEXT
+        )
+        """
+    )
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_mentor_shifts_open "
+        "ON mentor_shifts(discord_id) WHERE ended_at IS NULL"
+    )
 
 
 async def _backfill_main_units(db: aiosqlite.Connection) -> None:

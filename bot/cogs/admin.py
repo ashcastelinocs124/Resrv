@@ -54,11 +54,17 @@ def _admin_channel_only() -> app_commands.check:
 class ProfileModal(discord.ui.Modal, title="SCD Queue — Edit Profile"):
     """Edit profile modal, pre-filled with current data."""
 
-    full_name = discord.ui.TextInput(
-        label="Full Name",
-        placeholder="e.g. Alex Chen",
-        min_length=2,
-        max_length=100,
+    first_name = discord.ui.TextInput(
+        label="First Name",
+        placeholder="e.g. Alex",
+        min_length=1,
+        max_length=50,
+    )
+    last_name = discord.ui.TextInput(
+        label="Last Name",
+        placeholder="e.g. Chen",
+        min_length=1,
+        max_length=50,
     )
     email = discord.ui.TextInput(
         label="Email",
@@ -99,9 +105,12 @@ class ProfileModal(discord.ui.Modal, title="SCD Queue — Edit Profile"):
             )
             return
 
+        full_name_val = (
+            f"{self.first_name.value.strip()} {self.last_name.value.strip()}"
+        ).strip()
         await models.update_user_profile(
             user_id=self._user_id,
-            full_name=self.full_name.value.strip(),
+            full_name=full_name_val,
             email=email_val,
             major=self.major.value.strip(),
             college_id=self._college_id,
@@ -318,7 +327,11 @@ class AdminCog(commands.Cog):
                 "offline": "\U0001F534",      # red circle
             }.get(m["status"], "\U00002B1C")  # white square
 
-            serving_name = serving["discord_name"] if serving else "--"
+            serving_name = (
+                (serving.get("full_name") or serving["discord_name"])
+                if serving
+                else "--"
+            )
             lines.append(
                 f"{status_icon} **{m['name']}** | "
                 f"Serving: {serving_name} | "
@@ -348,7 +361,10 @@ class AdminCog(commands.Cog):
 
         modal = ProfileModal(user["id"], user.get("college_id"))
         if user.get("full_name"):
-            modal.full_name.default = user["full_name"]
+            prior_full = user["full_name"].strip()
+            parts = prior_full.split(None, 1)
+            modal.first_name.default = parts[0] if parts else ""
+            modal.last_name.default = parts[1] if len(parts) > 1 else ""
         if user.get("email"):
             modal.email.default = user["email"]
         if user.get("major"):

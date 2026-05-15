@@ -13,6 +13,7 @@ export interface QueueEntry {
   unit_id: number | null;
   discord_id: string | null;
   discord_name: string | null;
+  full_name: string | null;
   purpose: "production" | "training";
 }
 

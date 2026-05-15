@@ -95,6 +95,30 @@ async def _join_and_dm(
             ephemeral=True,
         )
 
+    # Training entries get routed to whichever mentor is currently free.
+    if purpose == "training":
+        try:
+            from bot.cogs.mentor import assign_mentor_for_training_entry
+
+            db_user = await models.get_user_by_discord_id(
+                str(interaction.user.id)
+            )
+            enriched = {
+                "id": entry["id"],
+                "discord_id": str(interaction.user.id),
+                "full_name": (db_user or {}).get("full_name"),
+                "discord_name": (
+                    (db_user or {}).get("discord_name")
+                    or interaction.user.display_name
+                ),
+                "machine_name": machine_name,
+            }
+            await assign_mentor_for_training_entry(bot, enriched)
+        except Exception:
+            log.exception(
+                "Failed to assign mentor for training entry %d", entry["id"]
+            )
+
 
 class PurposeSelectView(discord.ui.View):
     """DM view with Training / Production buttons shown before joining the queue."""
@@ -435,11 +459,17 @@ class CollegeSelectView(discord.ui.View):
 class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
     """Collects user profile info before first queue join (college picked separately)."""
 
-    full_name = discord.ui.TextInput(
-        label="Full Name",
-        placeholder="e.g. Alex Chen",
-        min_length=2,
-        max_length=100,
+    first_name = discord.ui.TextInput(
+        label="First Name",
+        placeholder="e.g. Alex",
+        min_length=1,
+        max_length=50,
+    )
+    last_name = discord.ui.TextInput(
+        label="Last Name",
+        placeholder="e.g. Chen",
+        min_length=1,
+        max_length=50,
     )
     email = discord.ui.TextInput(
         label="Email",
@@ -475,7 +505,10 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
         self._machine_id = machine_id
         self._college_id = college_id
         if prefill:
-            self.full_name.default = prefill.get("full_name") or ""
+            prior_full = (prefill.get("full_name") or "").strip()
+            parts = prior_full.split(None, 1)
+            self.first_name.default = parts[0] if parts else ""
+            self.last_name.default = parts[1] if len(parts) > 1 else ""
             self.email.default = prefill.get("email") or ""
             self.major.default = prefill.get("major") or ""
             self.graduation_year.default = prefill.get("graduation_year") or ""
@@ -500,6 +533,10 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
             )
             return
 
+        full_name_val = (
+            f"{self.first_name.value.strip()} {self.last_name.value.strip()}"
+        ).strip()
+
         machine = await models.get_machine(self._machine_id)
         if machine is None:
             await _defer_and_dm(interaction, "Machine not found.")
@@ -518,7 +555,7 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
         if public_mode or already_verified:
             await models.register_user(
                 user_id=self._user_id,
-                full_name=self.full_name.value.strip(),
+                full_name=full_name_val,
                 email=email_val,
                 major=self.major.value.strip(),
                 college_id=self._college_id,
@@ -573,7 +610,7 @@ class SignupModal(discord.ui.Modal, title="SCD Queue — Sign Up"):
             discord_id=str(interaction.user.id),
             machine_id=self._machine_id,
             college_id=self._college_id,
-            full_name=self.full_name.value.strip(),
+            full_name=full_name_val,
             email=email_val,
             major=self.major.value.strip(),
             graduation_year=year_val,

@@ -67,8 +67,10 @@ def build_machine_embed(
     machine:
         Row from the ``machines`` table (dict with id, name, slug, status).
     queue_entries:
-        Rows from ``get_queue_for_machine`` -- must include ``discord_name``,
-        ``status``, and ``position`` fields, ordered by position ASC.
+        Rows from ``get_queue_for_machine`` -- must include ``full_name`` /
+        ``discord_name``, ``status``, and ``position`` fields, ordered by
+        position ASC. The registered ``full_name`` is shown when present,
+        otherwise the Discord display name is used as a fallback.
 
     Returns
     -------
@@ -123,7 +125,7 @@ def build_machine_embed(
     # Currently serving
     if serving:
         serving_entry = serving[0]
-        serving_label = serving_entry["discord_name"]
+        serving_label = serving_entry.get("full_name") or serving_entry["discord_name"]
         if serving_entry.get("purpose") == "training":
             serving_label = f"[Training] {serving_label}"
         embed.add_field(
@@ -138,7 +140,7 @@ def build_machine_embed(
     if waiting:
         lines: list[str] = []
         for idx, entry in enumerate(waiting, start=1):
-            name = entry["discord_name"]
+            name = entry.get("full_name") or entry["discord_name"]
             if entry.get("purpose") == "training":
                 name = f"[Training] {name}"
             lines.append(f"**{idx}.** {name}")
